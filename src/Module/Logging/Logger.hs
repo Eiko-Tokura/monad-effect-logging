@@ -22,6 +22,9 @@ createFastBaseLogger logT = liftIO $ newFastLogger logT
 createStdoutBaseLogger :: MonadIO m => m (LogStr -> IO (), IO ())
 createStdoutBaseLogger = createFastBaseLogger (LogStdout defaultBufSize)
 
+createStderrBaseLogger :: MonadIO m => m (LogStr -> IO (), IO ())
+createStderrBaseLogger = createFastBaseLogger (LogStderr defaultBufSize)
+
 createFileLogger :: MonadIO m => FilePath -> m (LogStr -> IO (), IO ())
 createFileLogger fp = createFastBaseLogger (LogFile (FileLogSpec fp (512 * 1024 * 1024) 3) defaultBufSize)
 
@@ -42,7 +45,7 @@ baseToLogger baseIO = Logger $ \(Log _ str) -> baseIO str
 -- | add the types of the log to the log string on the left
 typedLogger :: Logger IO LogStr -> Logger IO LogStr
 typedLogger (Logger logFunc) = Logger $ \(Log types logStr) -> do
-  let logLine = "[" <> foldl' (\x y -> x <> "|" <> y) "" (map someLogTypeName types) <> "] " <> logStr
+  let logLine = "[" <> foldl' (\x y -> x <> "|" <> y) "" (map someLogCatName types) <> "] " <> logStr
   logFunc $ Log types (logLine <> logStr)
 {-# INLINE typedLogger #-}
 
