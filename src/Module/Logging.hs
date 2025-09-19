@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell, AllowAmbiguousTypes #-}
+{-# LANGUAGE TemplateHaskell, AllowAmbiguousTypes, OverloadedRecordDot #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 -- | We want a logger that supports open categories, open levels, open severities etc.
 -- so that we can filter on different levels for different categories
@@ -7,6 +7,7 @@
 module Module.Logging where
 
 import Control.Lens
+import Control.Applicative
 import Control.Monad
 import Control.Monad.Effect
 import Control.Monad.Logger (Loc(..))
@@ -14,6 +15,7 @@ import Data.Fixed
 import Data.Kind
 import Data.Text (Text)
 import Data.Typeable
+import Data.Functor.Contravariant
 import qualified Control.Monad.Logger as ML
 
 -- | so user can interpolate between levels easily
@@ -32,13 +34,13 @@ type LogSeverity = Fixed E1
 class Typeable a => IsLogType (a :: Type) where
   type LogSubType a :: Type
   type LogSubType a = ()
-  severity :: LogSubType a -> LogSeverity
+  severity    :: LogSubType a -> Maybe LogSeverity
   logTypeName :: LogSubType a -> ML.LogStr
 
 data SomeLogType where
   SomeLogType :: forall a. IsLogType a => Proxy a -> LogSubType a -> SomeLogType
 
-someSeverity :: SomeLogType -> LogSeverity
+someSeverity :: SomeLogType -> Maybe LogSeverity
 someSeverity (SomeLogType (_ :: Proxy a) subType) = severity @a subType
 {-# INLINE someSeverity #-}
 
@@ -57,9 +59,20 @@ data LogData = LogData
   , _logMsg    :: ML.LogStr
   }
 
+
 makeLenses ''Log
 makeLenses ''LogData
 makeLenses ''Loc
+
+instance Semigroup LogData where
+  l1 <> l2 = LogData
+    { _logLoc = l1 ^. logLoc <|> l2 ^. logLoc
+    , _logSource = l1 ^. logSource <|> l2 ^. logSource
+    , _logMsg = l1 ^. logMsg <> l2 ^. logMsg
+    }
+
+instance Monoid LogData where
+  mempty = LogData Nothing Nothing mempty
 
 -- | Some default log types, you can easily define your own
 data Debug
@@ -68,13 +81,13 @@ data Warn
 data Error
 data Other
 
-instance IsLogType Debug where severity _ = 1; logTypeName _ = "DEBUG"
-instance IsLogType Info  where severity _ = 2; logTypeName _ = "INFO"
-instance IsLogType Warn  where severity _ = 3; logTypeName _ = "WARN"
-instance IsLogType Error where severity _ = 4; logTypeName _ = "ERROR"
+instance IsLogType Debug where severity _ = Just 1; logTypeName _ = "DEBUG"
+instance IsLogType Info  where severity _ = Just 2; logTypeName _ = "INFO"
+instance IsLogType Warn  where severity _ = Just 3; logTypeName _ = "WARN"
+instance IsLogType Error where severity _ = Just 4; logTypeName _ = "ERROR"
 instance IsLogType Other where
   type LogSubType Other = Text
-  severity _ = 2
+  severity _ = Just 2
   logTypeName t = "OTHER:" <> ML.toLogStr t
 
 instance Semigroup a => Semigroup (Log a) where
@@ -122,32 +135,32 @@ addLogType :: SomeLogType -> Log a -> Log a
 addLogType t = over logType (t:)
 {-# INLINE addLogType #-}
 
-filterLogTypes :: Applicative m => ([SomeLogType] -> Bool) -> Logger m a -> Logger m a
-filterLogTypes p (Logger logger) = Logger $ \log' -> when (p $ log' ^. logType) $ logger log'
+filterLogTypes :: Applicative m => Predicate [SomeLogType] -> Logger m a -> Logger m a
+filterLogTypes p (Logger logger) = Logger $ \log' -> when (p.getPredicate $ log' ^. logType) $ logger log'
 {-# INLINE filterLogTypes #-}
 
-anyLogType :: Applicative m => (SomeLogType -> Bool) -> Logger m a -> Logger m a
-anyLogType p = filterLogTypes (any p)
+anyLogType :: Applicative m => Predicate SomeLogType -> Logger m a -> Logger m a
+anyLogType p = filterLogTypes (Predicate $ any p.getPredicate)
 {-# INLINE anyLogType #-}
 
-excludeLogType :: Applicative m => (SomeLogType -> Bool) -> Logger m a -> Logger m a
-excludeLogType p = filterLogTypes (not . any p)
+excludeLogType :: Applicative m => Predicate SomeLogType -> Logger m a -> Logger m a
+excludeLogType p = filterLogTypes (Predicate $ not . any p.getPredicate)
 {-# INLINE excludeLogType #-}
 
 severityAtLeast :: Applicative m => LogSeverity -> Logger m a -> Logger m a
-severityAtLeast s = anyLogType (\t -> someSeverity t >= s)
+severityAtLeast s = anyLogType $ Predicate $ \t -> someSeverity t >= Just s
 {-# INLINE severityAtLeast #-}
 
 -- | use type applications to check if a log type is present
-isLogType :: forall a. IsLogType a => SomeLogType -> Bool
-isLogType (SomeLogType (Proxy :: Proxy b) _) = case eqT @a @b of
+isLogType :: forall a. IsLogType a => Predicate SomeLogType
+isLogType = Predicate $ \(SomeLogType (Proxy :: Proxy b) _) -> case eqT @a @b of
   Just Refl -> True
   Nothing   -> False
 {-# INLINE isLogType #-}
 
-isLogSubType :: forall a. IsLogType a => (LogSubType a -> Bool) -> SomeLogType -> Bool
-isLogSubType p (SomeLogType (Proxy :: Proxy b) subType) = case eqT @a @b of
-  Just Refl -> p subType
+isLogSubType :: forall a. IsLogType a => Predicate (LogSubType a) -> Predicate SomeLogType
+isLogSubType p = Predicate $ \(SomeLogType (Proxy :: Proxy b) subType) -> case eqT @a @b of
+  Just Refl -> p.getPredicate subType
   Nothing   -> False
 {-# INLINE isLogSubType #-}
 
@@ -176,11 +189,14 @@ instance (MonadIO m, LoggingModule `In` mods) => ML.MonadLogger (EffT mods es m)
   {-# INLINE monadLoggerLog #-}
 
 instance (MonadIO m, LoggingModule `In` mods) => ML.MonadLoggerIO (EffT mods es m) where
-  askLoggerIO = queriesModule @LoggingModule ((\f loc src lev str -> f $ Log [mlLogLevelToLogType lev] $ LogData
-    { _logLoc    = Just loc
-    , _logSource = Just src
-    , _logMsg    = str
-    }) . runLogger . logging)
+  askLoggerIO = queriesModule @LoggingModule $ (\f loc src lev str -> f
+    $ Log [mlLogLevelToLogType lev]
+    $ LogData
+      { _logLoc    = Just loc
+      , _logSource = Just src
+      , _logMsg    = str
+      }
+    ) . runLogger . logging
   {-# INLINE askLoggerIO #-}
 
 mlLogLevelToLogType :: ML.LogLevel -> SomeLogType
