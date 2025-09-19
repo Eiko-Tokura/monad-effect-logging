@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell, AllowAmbiguousTypes, OverloadedRecordDot #-}
+{-# LANGUAGE TemplateHaskell, AllowAmbiguousTypes, OverloadedRecordDot, FunctionalDependencies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 -- | We want a logger that supports open categories, open levels, open severities etc.
 -- so that we can filter on different levels for different categories
@@ -6,16 +6,17 @@
 -- finally we will also provide an interface for MonadLogger for compatibility
 module Module.Logging where
 
-import Control.Lens
 import Control.Applicative
+import Control.Lens
 import Control.Monad
 import Control.Monad.Effect
 import Control.Monad.Logger (Loc(..))
 import Data.Fixed
+import Data.Functor.Contravariant
 import Data.Kind
+import Data.Maybe
 import Data.Text (Text)
 import Data.Typeable
-import Data.Functor.Contravariant
 import qualified Control.Monad.Logger as ML
 
 -- | so user can interpolate between levels easily
@@ -29,27 +30,36 @@ type LogSeverity = Fixed E1
 -- Database module can have `data Database` used as a log type
 --
 -- and have a subtype
+-- @
 -- data DatabaseSubType = ConnectionPool | Query | Migration | Cursor deriving (Show, Eq)
--- type LogSubType Database = DatabaseSubType
-class Typeable a => IsLogType (a :: Type) where
-  type LogSubType a :: Type
-  type LogSubType a = ()
-  severity    :: LogSubType a -> Maybe LogSeverity
-  logTypeName :: LogSubType a -> ML.LogStr
+-- @
+--
+-- you can then write instance
+--
+-- @
+-- instance IsLogType DatabaseSubType where
+--   severity _    = Nothing
+--   logTypeName _ = "DB"
+-- @
+class Typeable sub => IsLogType (sub :: Type) where
+  severity    :: sub -> Maybe LogSeverity
+  -- | This is used for display only
+  logTypeName :: sub -> ML.LogStr
 
-data SomeLogType where
-  SomeLogType :: forall a. IsLogType a => Proxy a -> LogSubType a -> SomeLogType
+-- | An exsitential type that wraps all log types, it is easy to define a new instance
+data LogType where
+  LogType :: forall sub. IsLogType sub => sub -> LogType
 
-someSeverity :: SomeLogType -> Maybe LogSeverity
-someSeverity (SomeLogType (_ :: Proxy a) subType) = severity @a subType
+someSeverity :: LogType -> Maybe LogSeverity
+someSeverity (LogType @a subType) = severity @a subType
 {-# INLINE someSeverity #-}
 
-someLogTypeName :: SomeLogType -> ML.LogStr
-someLogTypeName (SomeLogType (_ :: Proxy a) subType) = logTypeName @a subType
+someLogTypeName :: LogType -> ML.LogStr
+someLogTypeName (LogType @a subType) = logTypeName @a subType
 {-# INLINE someLogTypeName #-}
 
 data Log a = Log
-  { _logType    :: [SomeLogType]
+  { _logType    :: [LogType]
   , _logContent :: a
   } deriving (Functor)
 
@@ -58,7 +68,6 @@ data LogData = LogData
   , _logSource :: Maybe ML.LogSource
   , _logMsg    :: ML.LogStr
   }
-
 
 makeLenses ''Log
 makeLenses ''LogData
@@ -70,25 +79,27 @@ instance Semigroup LogData where
     , _logSource = l1 ^. logSource <|> l2 ^. logSource
     , _logMsg = l1 ^. logMsg <> l2 ^. logMsg
     }
+  {-# INLINE (<>) #-}
 
 instance Monoid LogData where
   mempty = LogData Nothing Nothing mempty
+  {-# INLINE mempty #-}
 
 -- | Some default log types, you can easily define your own
-data Debug
-data Info
-data Warn
-data Error
-data Other
+data    Debug = Debug
+data    Info  = Info
+data    Warn  = Warn
+data    Error = Error
+newtype Other = Other Text
 
 instance IsLogType Debug where severity _ = Just 1; logTypeName _ = "DEBUG"
 instance IsLogType Info  where severity _ = Just 2; logTypeName _ = "INFO"
 instance IsLogType Warn  where severity _ = Just 3; logTypeName _ = "WARN"
 instance IsLogType Error where severity _ = Just 4; logTypeName _ = "ERROR"
 instance IsLogType Other where
-  type LogSubType Other = Text
+  -- type LogSubType Other = Text
   severity _ = Just 2
-  logTypeName t = "OTHER:" <> ML.toLogStr t
+  logTypeName (Other t) = "OTHER:" <> ML.toLogStr t
 
 instance Semigroup a => Semigroup (Log a) where
   Log t1 c1 <> Log t2 c2 = Log (t1 <> t2) (c1 <> c2)
@@ -106,8 +117,10 @@ instance Applicative Log where
 
 type Logger :: (Type -> Type) -> Type -> Type
 newtype Logger m a = Logger
-  { runLogger :: Log a -> m ()
+  { _runLogger :: Log a -> m ()
   }
+
+makeLenses ''Logger
 
 instance Applicative m => Semigroup (Logger m a) where
   Logger f <> Logger g = Logger $ \log' -> f log' *> g log'
@@ -122,44 +135,67 @@ instance Contravariant (Logger m) where
   {-# INLINE contramap #-}
 
 --------------------------------------------------------------------------------
+-- $ Some combinators for logger filtering
+--
+-- You can use these combinators to filter logs based on their types and severities.
+-- Example:
+--
+-- @
+-- localLogger
+--   ( anyLogType (severityThat $ Predicate (>= 1))
+--   . excludeLogType (isLogType @Database)
+--   ) $ do
+--     ...
+-- @
 
+-- | Locally modify the logger
 localLogger :: (Monad m, Logging a `In` mods) => (Logger IO a -> Logger IO a) -> EffT mods es m b -> EffT mods es m b
 localLogger f = localModule (\(LoggingRead logger) -> LoggingRead (f logger))
 {-# INLINE localLogger #-}
 
-localLoggerContramap :: (Monad m, Logging a `In` mods) => (a -> a) -> EffT mods es m c -> EffT mods es m c
-localLoggerContramap f = localLogger (contramap f)
-{-# INLINE localLoggerContramap #-}
+-- | Locally modify the log
+localLog :: (Monad m, Logging a `In` mods) => (Log a -> Log a) -> EffT mods es m c -> EffT mods es m c
+localLog f = localLogger $ over runLogger (. f)
+{-# INLINE localLog #-}
 
-addLogType :: SomeLogType -> Log a -> Log a
-addLogType t = over logType (t:)
+-- | Add a log type to the log
+-- @
+-- localLogger (addLogType $ LogType ConnectionPool) $ do
+--   ...
+-- @
+addLogType :: LogType -> Logger m a -> Logger m a
+addLogType t = over runLogger (. over logType (t:))
 {-# INLINE addLogType #-}
 
-filterLogTypes :: Applicative m => Predicate [SomeLogType] -> Logger m a -> Logger m a
+filterLogTypes :: Applicative m => Predicate [LogType] -> Logger m a -> Logger m a
 filterLogTypes p (Logger logger) = Logger $ \log' -> when (p.getPredicate $ log' ^. logType) $ logger log'
 {-# INLINE filterLogTypes #-}
 
-anyLogType :: Applicative m => Predicate SomeLogType -> Logger m a -> Logger m a
+anyLogType :: Applicative m => Predicate LogType -> Logger m a -> Logger m a
 anyLogType p = filterLogTypes (Predicate $ any p.getPredicate)
 {-# INLINE anyLogType #-}
 
-excludeLogType :: Applicative m => Predicate SomeLogType -> Logger m a -> Logger m a
+excludeLogType :: Applicative m => Predicate LogType -> Logger m a -> Logger m a
 excludeLogType p = filterLogTypes (Predicate $ not . any p.getPredicate)
 {-# INLINE excludeLogType #-}
 
-severityAtLeast :: Applicative m => LogSeverity -> Logger m a -> Logger m a
-severityAtLeast s = anyLogType $ Predicate $ \t -> someSeverity t >= Just s
-{-# INLINE severityAtLeast #-}
+severityThat :: Predicate LogSeverity -> Predicate LogType
+severityThat = contramap (fromMaybe 0 . someSeverity)
+{-# INLINE severityThat #-}
+
+noSeverity :: Predicate LogType
+noSeverity = Predicate (isNothing . someSeverity)
+{-# INLINE noSeverity #-}
 
 -- | use type applications to check if a log type is present
-isLogType :: forall a. IsLogType a => Predicate SomeLogType
-isLogType = Predicate $ \(SomeLogType (Proxy :: Proxy b) _) -> case eqT @a @b of
+isLogType :: forall sub. IsLogType sub => Predicate LogType
+isLogType = Predicate $ \(LogType (_ :: sub')) -> case eqT @sub @sub' of
   Just Refl -> True
   Nothing   -> False
 {-# INLINE isLogType #-}
 
-isLogSubType :: forall a. IsLogType a => Predicate (LogSubType a) -> Predicate SomeLogType
-isLogSubType p = Predicate $ \(SomeLogType (Proxy :: Proxy b) subType) -> case eqT @a @b of
+isLogSubType :: forall sub. IsLogType sub => Predicate sub -> Predicate LogType
+isLogSubType p = Predicate $ \(LogType (subType :: sub')) -> case eqT @sub @sub' of
   Just Refl -> p.getPredicate subType
   Nothing   -> False
 {-# INLINE isLogSubType #-}
@@ -178,7 +214,7 @@ type LoggingModule = Logging LogData
 instance (MonadIO m, LoggingModule `In` mods) => ML.MonadLogger (EffT mods es m) where
   monadLoggerLog loc logsource loglevel msg = do
     LoggingRead logger <- queryModule @LoggingModule
-    liftIO $ runLogger logger Log
+    liftIO $ _runLogger logger Log
       { _logType    = [mlLogLevelToLogType loglevel]
       , _logContent = LogData
           { _logLoc    = Just loc
@@ -196,12 +232,14 @@ instance (MonadIO m, LoggingModule `In` mods) => ML.MonadLoggerIO (EffT mods es 
       , _logSource = Just src
       , _logMsg    = str
       }
-    ) . runLogger . logging
+    ) . _runLogger . logging
   {-# INLINE askLoggerIO #-}
 
-mlLogLevelToLogType :: ML.LogLevel -> SomeLogType
-mlLogLevelToLogType ML.LevelDebug     = SomeLogType (Proxy @Debug) ()
-mlLogLevelToLogType ML.LevelInfo      = SomeLogType (Proxy @Info ) ()
-mlLogLevelToLogType ML.LevelWarn      = SomeLogType (Proxy @Warn ) ()
-mlLogLevelToLogType ML.LevelError     = SomeLogType (Proxy @Error) ()
-mlLogLevelToLogType (ML.LevelOther t) = SomeLogType (Proxy @Other) t
+-- | A compatibility function that works for the old MonadLogger instances
+mlLogLevelToLogType :: ML.LogLevel -> LogType
+mlLogLevelToLogType ML.LevelDebug     = LogType Debug
+mlLogLevelToLogType ML.LevelInfo      = LogType Info
+mlLogLevelToLogType ML.LevelWarn      = LogType Warn
+mlLogLevelToLogType ML.LevelError     = LogType Error
+mlLogLevelToLogType (ML.LevelOther t) = LogType (Other t)
+{-# INLINE mlLogLevelToLogType #-}

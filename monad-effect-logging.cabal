@@ -69,11 +69,14 @@ library
     -- other-extensions:
 
     -- Other library packages from which modules are imported.
-    build-depends:    base >= 4 && < 5
-                    , monad-logger
-                    , monad-effect
-                    , lens
-                    , text
+    build-depends: base >= 4 && < 5
+                 , fast-logger
+                 , lens
+                 , monad-effect
+                 , monad-logger
+                 , stm
+                 , text
+                 , time
 
     -- Directories containing source files.
     hs-source-dirs:   src
