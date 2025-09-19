@@ -33,6 +33,7 @@ class Typeable a => IsLogType (a :: Type) where
   type LogSubType a :: Type
   type LogSubType a = ()
   severity :: LogSubType a -> LogSeverity
+  logTypeName :: LogSubType a -> ML.LogStr
 
 data SomeLogType where
   SomeLogType :: forall a. IsLogType a => Proxy a -> LogSubType a -> SomeLogType
@@ -40,6 +41,10 @@ data SomeLogType where
 someSeverity :: SomeLogType -> LogSeverity
 someSeverity (SomeLogType (_ :: Proxy a) subType) = severity @a subType
 {-# INLINE someSeverity #-}
+
+someLogTypeName :: SomeLogType -> ML.LogStr
+someLogTypeName (SomeLogType (_ :: Proxy a) subType) = logTypeName @a subType
+{-# INLINE someLogTypeName #-}
 
 data Log a = Log
   { _logType    :: [SomeLogType]
@@ -63,14 +68,14 @@ data Warn
 data Error
 data Other
 
-instance IsLogType Debug where severity _ = 1
-instance IsLogType Info  where severity _ = 2
-instance IsLogType Warn  where severity _ = 3
-instance IsLogType Error where severity _ = 4
+instance IsLogType Debug where severity _ = 1; logTypeName _ = "DEBUG"
+instance IsLogType Info  where severity _ = 2; logTypeName _ = "INFO"
+instance IsLogType Warn  where severity _ = 3; logTypeName _ = "WARN"
+instance IsLogType Error where severity _ = 4; logTypeName _ = "ERROR"
 instance IsLogType Other where
   type LogSubType Other = Text
   severity _ = 2
-
+  logTypeName t = "OTHER:" <> ML.toLogStr t
 
 instance Semigroup a => Semigroup (Log a) where
   Log t1 c1 <> Log t2 c2 = Log (t1 <> t2) (c1 <> c2)
@@ -146,8 +151,10 @@ isLogSubType p (SomeLogType (Proxy :: Proxy b) subType) = case eqT @a @b of
   Nothing   -> False
 {-# INLINE isLogSubType #-}
 
+-- | The Logging module type, a module `Logging a` provides logging capabilities for logs of type `a`
 type Logging :: Type -> Type
 data Logging a
+
 instance Module (Logging (a :: Type)) where
   newtype ModuleRead  (Logging a) = LoggingRead { logging :: Logger IO a }
   data    ModuleState (Logging a) = LoggingState
