@@ -14,6 +14,7 @@ import Data.Functor.Contravariant (contramap)
 import Module.Logging
 import System.Log.FastLogger
 import qualified Control.Monad.Logger as ML
+import Data.List (foldl1')
 
 -- | It doesn't mean it is really fast, just because it is imported from fast-logger
 createFastBaseLogger :: MonadIO m => LogType -> m (LogStr -> IO (), IO ())
@@ -45,8 +46,11 @@ baseToLogger baseIO = Logger $ \(Log _ str) -> baseIO str
 -- | add the types of the log to the log string on the left
 typedLogger :: Logger IO LogStr -> Logger IO LogStr
 typedLogger (Logger logFunc) = Logger $ \(Log types logStr) -> do
-  let logLine = "[" <> foldl' (\x y -> x <> "|" <> y) "" (map someLogCatName types) <> "] " <> logStr
-  logFunc $ Log types (logLine <> logStr)
+  let typeNames = map someLogCatName types
+  let logLine
+        | null typeNames = logStr
+        | otherwise = "[" <> foldl1' (\x y -> x <> "|" <> y) typeNames <> "] " <> logStr
+  logFunc $ Log types logLine
 {-# INLINE typedLogger #-}
 
 -- | add the current time to the log string on the left
