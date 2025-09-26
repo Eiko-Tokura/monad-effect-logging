@@ -10,23 +10,37 @@ import Control.Concurrent.STM
 import Control.Monad (forever)
 import Control.Monad.IO.Class
 import Data.Time.Clock
-import Data.Functor.Contravariant (contramap)
 import Module.Logging
 import System.Log.FastLogger
 import qualified Control.Monad.Logger as ML
 import Data.List (foldl1')
 
--- | It doesn't mean it is really fast, just because it is imported from fast-logger
-createFastBaseLogger :: MonadIO m => LogType -> m (LogStr -> IO (), IO ())
-createFastBaseLogger logT = liftIO $ newFastLogger logT
+data BaseLogger m = BaseLogger
+  { baseLogFunc :: LogStr -> m ()
+  , cleanUpFunc :: m ()
+  }
 
-createStdoutBaseLogger :: MonadIO m => m (LogStr -> IO (), IO ())
+liftBaseLogger :: (m () -> n ()) -> BaseLogger m -> BaseLogger n
+liftBaseLogger nat (BaseLogger f c) = BaseLogger (nat . f) (nat c)
+{-# INLINE liftBaseLogger #-}
+
+instance Applicative m => Semigroup (BaseLogger m) where
+  (BaseLogger f1 c1) <> (BaseLogger f2 c2) = BaseLogger (f1 *> f2) (c1 *> c2)
+  {-# INLINE (<>) #-}
+instance Applicative m => Monoid (BaseLogger m) where
+  mempty = BaseLogger (const $ pure ()) (pure ())
+
+-- | It doesn't mean it is really fast, just because it is imported from fast-logger
+createFastBaseLogger :: MonadIO m => LogType -> m (BaseLogger IO)
+createFastBaseLogger logT = liftIO $ uncurry BaseLogger <$> newFastLogger logT
+
+createStdoutBaseLogger :: MonadIO m => m (BaseLogger IO)
 createStdoutBaseLogger = createFastBaseLogger (LogStdout defaultBufSize)
 
-createStderrBaseLogger :: MonadIO m => m (LogStr -> IO (), IO ())
+createStderrBaseLogger :: MonadIO m => m (BaseLogger IO)
 createStderrBaseLogger = createFastBaseLogger (LogStderr defaultBufSize)
 
-createFileLogger :: MonadIO m => FilePath -> m (LogStr -> IO (), IO ())
+createFileLogger :: MonadIO m => FilePath -> m (BaseLogger IO)
 createFileLogger fp = createFastBaseLogger (LogFile (FileLogSpec fp (512 * 1024 * 1024) 3) defaultBufSize)
 
 type Timed = Bool
