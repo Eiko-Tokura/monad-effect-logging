@@ -25,7 +25,7 @@ liftBaseLogger nat (BaseLogger f c) = BaseLogger (nat . f) (nat c)
 {-# INLINE liftBaseLogger #-}
 
 instance Applicative m => Semigroup (BaseLogger m) where
-  (BaseLogger f1 c1) <> (BaseLogger f2 c2) = BaseLogger (f1 *> f2) (c1 *> c2)
+  (BaseLogger f1 c1) <> (BaseLogger f2 c2) = BaseLogger (\s -> f1 s *> f2 s) (c1 *> c2)
   {-# INLINE (<>) #-}
 instance Applicative m => Monoid (BaseLogger m) where
   mempty = BaseLogger (const $ pure ()) (pure ())
@@ -48,8 +48,9 @@ type Timed = Bool
 simpleLogger :: Timed -> (LogStr -> IO ()) -> Logger IO LogData
 simpleLogger time
   = contramap logSimple
-  . typedLogger
+  . contramap (<> "\n")
   . (if time then timeLogger else id)
+  . typedLogger
   . baseToLogger
 
 -- | simply apply the provided function to the log string
