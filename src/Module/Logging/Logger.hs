@@ -14,6 +14,7 @@ import Module.Logging
 import System.Log.FastLogger
 import qualified Control.Monad.Logger as ML
 import Data.List (foldl1')
+import Control.Exception (bracket)
 
 data BaseLogger m = BaseLogger
   { baseLogFunc :: LogStr -> m ()
@@ -111,3 +112,15 @@ withBaseLogger createBaseLogger makeLogger action = bracketEffT
   (liftIO createBaseLogger)
   (\BaseLogger {cleanUpFunc} -> liftIO cleanUpFunc)
   (\BaseLogger {baseLogFunc} -> runLogging (makeLogger baseLogFunc) action)
+{-# INLINE withBaseLogger #-}
+
+withBaseLoggerIO
+  :: IO (BaseLogger IO)                       -- ^ specify a base logger
+  -> ((LogStr -> IO ()) -> Logger IO LogData) -- ^ specify how to
+  -> (Logger IO LogData -> IO a)  -- ^ action to run with the logger
+  -> IO a
+withBaseLoggerIO createBaseLogger makeLogger action = bracket
+  (liftIO createBaseLogger)
+  (\BaseLogger {cleanUpFunc} -> liftIO cleanUpFunc)
+  (\BaseLogger {baseLogFunc} -> action (makeLogger baseLogFunc))
+{-# INLINE withBaseLoggerIO #-}
