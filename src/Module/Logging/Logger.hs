@@ -8,7 +8,7 @@ module Module.Logging.Logger
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad (forever)
-import Control.Monad.IO.Class
+import Control.Monad.Effect
 import Data.Time.Clock
 import Module.Logging
 import System.Log.FastLogger
@@ -94,3 +94,19 @@ makeConcurrentLogger (Logger logger) = do
     logItem <- atomically $ readTChan queue
     logger logItem
   return $ Logger $ \logItem -> liftIO $ atomically $ writeTChan queue logItem
+
+-- $ Bracket pattern
+-- | This function is used to create a logger in a scoped manner.
+-- It takes care of creating and cleaning up the base logger.
+--
+-- Hint: use Ap and <> to combine multiple base loggers in IO (BaseLogger IO)
+withBaseLogger
+  :: (ConsFDataList c (LoggingModule : mods), MonadIO m, MonadMask m)
+  => IO (BaseLogger IO)                       -- ^ specify a base logger
+  -> ((LogStr -> IO ()) -> Logger IO LogData) -- ^ specify how to format the log data
+  -> EffT' c (LoggingModule : mods) es m a
+  -> EffT' c mods es m a
+withBaseLogger createBaseLogger makeLogger action = bracketEffT
+  (liftIO createBaseLogger)
+  (\BaseLogger {cleanUpFunc} -> liftIO cleanUpFunc)
+  (\BaseLogger {baseLogFunc} -> runLogging (makeLogger baseLogFunc) action)
