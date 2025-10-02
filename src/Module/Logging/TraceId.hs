@@ -36,12 +36,18 @@ WithTraceId
 --   State rngState  :: !Word64
 -- |]
 
+-- | Assign the provided traceId to the logging context
 withTraceId
-  :: (Monad m, Logging LogData `In` mods, ConsFDataList FData (WithTraceId : mods), WithTraceId `NotIn` mods)
+  :: ( Monad m
+     , Logging LogData `In`    mods
+     , WithTraceId     `NotIn` mods
+     , ConsFDataList FData (WithTraceId : mods)
+     )
   => TraceId -> EffT (WithTraceId : mods) es m a -> EffT mods es m a
 withTraceId tid = effAddLogCat' (LogCat tid) . runWithTraceId (WithTraceIdRead tid)
 {-# INLINE withTraceId #-}
 
+-- | Assign new traceId using the provided TraceIdGen module
 withNewTraceId
   :: ( MonadIO m
      , TraceIdGen      `In`    mods
