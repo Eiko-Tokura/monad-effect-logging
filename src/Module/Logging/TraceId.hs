@@ -70,14 +70,3 @@ withRandomTraceIdGen act = do
   rng <- liftIO newRNG
   runTraceIdGen (TraceIdGenRead $ TraceId <$> uniformWord64FromRNG rng) act
 {-# INLINE withRandomTraceIdGen #-}
-
-
--- instance (ConsFData c, NotEq mod WithTraceId, In' c mod mods) => In' c mod (WithTraceId : mods) where
-
-instance {-# OVERLAPPABLE #-} (InList m (WithTraceId : ms), In' c m ms, (forall w'. ConsFDataList c (w' : ms))) => In' c m (WithTraceId : ms) where
-  getIn      = getIn @c @m @ms . snd . unConsFData
-  modifyIn f = \(w :*** ms') -> w :*** modifyIn @c @m @ms f ms'
-  lensIn   f = \(w' :*** ms') -> (w' :***) <$> lensIn f ms'
-  {-# INLINE getIn #-}
-  {-# INLINE modifyIn #-}
-  {-# INLINE lensIn #-}
