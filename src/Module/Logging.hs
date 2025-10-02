@@ -50,9 +50,12 @@ type LogSeverity = Fixed E1
 --   logTypeDisplay _ = "DB"
 -- @
 class Typeable sub => IsLogCat (sub :: Type) where
-  severity       :: sub -> Maybe LogSeverity
+  severity :: sub -> Maybe LogSeverity
+  severity _ = Nothing
+  {-# INLINE severity #-}
   -- | This is used for display only
   logTypeDisplay :: sub -> ML.LogStr
+  {-# MINIMAL logTypeDisplay #-}
 
 -- | An exsitential type that wraps all logging categories, it is easy to define a new instance
 data LogCat where
@@ -179,6 +182,24 @@ localLog f = localLogger $ over runLogger (. f)
 addLogCat :: LogCat -> Logger m a -> Logger m a
 addLogCat t = over runLogger (. over logType (t:))
 {-# INLINE addLogCat #-}
+
+-- | Add a log category to the log in EffT
+-- @
+-- effAddLogCat @LogData (LogCat ConnectionPool) $ do
+--   ...
+-- @
+effAddLogCat :: forall a mods es m b. (Monad m, Logging a `In` mods) => LogCat -> EffT mods es m b -> EffT mods es m b
+effAddLogCat logCat = localLogger @a (addLogCat logCat)
+{-# INLINE effAddLogCat #-}
+
+-- | Add a log category to the log in EffT (defaulting to In (Logging LogData) mods)
+-- @
+-- effAddLogCat' (LogCat ConnectionPool) $ do
+--   ...
+-- @
+effAddLogCat' :: forall mods es m b. (Monad m, Logging LogData `In` mods) => LogCat -> EffT mods es m b -> EffT mods es m b
+effAddLogCat' logCat = localLogger @LogData (addLogCat logCat)
+{-# INLINE effAddLogCat' #-}
 
 filterLogCats :: Applicative m => Predicate [LogCat] -> Logger m a -> Logger m a
 filterLogCats p (Logger logger) = Logger $ \log' -> when (p.getPredicate $ log' ^. logType) $ logger log'

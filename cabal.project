@@ -1,4 +1,5 @@
 packages:
   ../item/
   ../monad-effect/
+  ../probabilist/
   .

@@ -50,6 +50,7 @@ library
     -- Modules exported by the library.
     exposed-modules: Module.Logging
                    , Module.Logging.Logger
+                   , Module.Logging.TraceId
 
     -- Modules included in this library but not exported.
     -- other-modules:
@@ -67,6 +68,7 @@ library
                  , stm
                  , text
                  , time
+                 , probabilist
 
     -- Directories containing source files.
     hs-source-dirs:   src
