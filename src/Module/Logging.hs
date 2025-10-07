@@ -23,7 +23,6 @@ import Data.Text (Text)
 import Data.Typeable
 import qualified Control.Monad.Logger as ML
 
-import Parser.CommandLine
 import System.Environment
 import Text.Read (readMaybe)
 
@@ -258,27 +257,43 @@ instance SystemModule (Logging a) where
     }
   data    ModuleEvent    (Logging a) = LoggingEvent
 
-instance Loadable c (Logging a) mods where
-  initModule (LoggerInitData logger Nothing) = return (LoggingRead logger, LoggingState)
-  initModule (LoggerInitData logger (Just s)) = return (LoggingRead $ anyLogCat (severityThat $ Predicate (>= s)) logger, LoggingState)
-  {-# INLINE initModule #-}
+instance Loadable c (Logging a) mods es where
+  withModule (LoggerInitData logger Nothing)  = runEffTOuter_ (LoggingRead logger) LoggingState
+  withModule (LoggerInitData logger (Just s)) = runEffTOuter_ (LoggingRead $ anyLogCat (severityThat $ Predicate (>= s)) logger) LoggingState
+  {-# INLINE withModule #-}
 
-newtype instance ModuleInitDataHardCode (Logging a) = LoggerInitDataHardCode { loggerHardCode :: Logger IO a }
+-- | Maps 'Debug', 'Info', 'Warn', 'Error' to 1, 2, 3, 4 respectively
+-- and also accepts numbers between 0 and 10 with a precision of 1 decimal place
+defaultStringToLogSeverity :: String -> Either Text LogSeverity
+defaultStringToLogSeverity = \case
+  "Debug" -> Right 1
+  "Info"  -> Right 2
+  "Warn"  -> Right 3
+  "Error" -> Right 4
+  other   -> maybe (Left "Invalid LogLevel, must be one of 'Debug', 'Info', 'Warn', 'Error', or a number between 0 and 10 with a precision of 1 decimal place") Right
+    $ readMaybe other
+{-# INLINABLE defaultStringToLogSeverity #-}
 
-instance LoadableEnv c LoggingModule mods where
-  readInitDataFromEnv initHC = do
-    mLogLevel <- liftIO $ (readMaybe =<<) <$> lookupEnv "LOG_LEVEL"
-    return $ LoggerInitData (loggerHardCode initHC) mLogLevel
-  {-# INLINE readInitDataFromEnv #-}
+-- | Load a log level from environment variable LOG_LEVEL,
+defaultLoadFromEnv :: Logger IO LogData -> IO (ModuleInitData LoggingModule)
+defaultLoadFromEnv logger = do
+  mLogLevel <- liftIO $ (readMaybe =<<) <$> lookupEnv "LOG_LEVEL"
+  return $ LoggerInitData logger mLogLevel
+{-# INLINABLE defaultLoadFromEnv #-}
 
-instance LoadableArgs c LoggingModule mods where
-  readInitDataFromArgs initHC args = do
-    mLogLevel <- effEitherSystemException $ pure $ runParserE
-        "--log-level <severity>, (Debug -> 1, Info -> 2, Warn -> 3, Error -> 4, Other <string> -> 2)>"
-        (readFromArgs @(Maybe (ReadArgUsingRead LogSeverity)) "--log-level")
-        args
-    return $ LoggerInitData (loggerHardCode initHC) (unReadArgUsingRead <$> mLogLevel)
-  {-# INLINE readInitDataFromArgs #-}
+-- | Load an argument --log-level <level> from command line arguments,
+-- if none is provided, it will log everything (Maybe LogSeverity = Nothing)
+defaultLoadFromArgs :: Logger IO LogData -> [String] -> Either Text (ModuleInitData LoggingModule)
+defaultLoadFromArgs logger []                = Right $ LoggerInitData logger Nothing
+defaultLoadFromArgs logger args@(_:tailArgs) = case
+  (do
+    ("--log-level", a1) <- zip args tailArgs
+    pure $ defaultStringToLogSeverity a1
+  ) of
+    (Right logLevel : _) -> Right $ LoggerInitData logger (Just logLevel)
+    (Left err : _)       -> Left err
+    _                    -> Right $ LoggerInitData logger Nothing
+{-# INLINABLE defaultLoadFromArgs #-}
 
 monadLoggerAdapter :: Logger IO LogData -> ML.Loc -> ML.LogSource -> ML.LogLevel -> ML.LogStr -> IO ()
 monadLoggerAdapter logger loc src lev msg = _runLogger logger Log

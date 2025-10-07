@@ -62,7 +62,6 @@ library
     build-depends: base >= 4 && < 5
                  , fast-logger
                  , lens
-                 , item
                  , monad-effect
                  , monad-logger
                  , stm
