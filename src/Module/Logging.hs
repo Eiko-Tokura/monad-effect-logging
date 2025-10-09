@@ -164,7 +164,7 @@ instance Contravariant (Logger m) where
 -- @
 
 -- | Locally modify the logger
-localLogger :: forall a m mods es b. (Monad m, Logging a `In` mods) => (Logger IO a -> Logger IO a) -> EffT mods es m b -> EffT mods es m b
+localLogger :: forall a c m mods es b. (Monad m, In' c (Logging a) mods) => (Logger IO a -> Logger IO a) -> EffT' c mods es m b -> EffT' c mods es m b
 localLogger f = localModule (\(LoggingRead logger) -> LoggingRead (f logger))
 {-# INLINE localLogger #-}
 
@@ -187,7 +187,7 @@ addLogCat t = over runLogger (. over logType (t:))
 -- effAddLogCat @LogData (LogCat ConnectionPool) $ do
 --   ...
 -- @
-effAddLogCat :: forall a mods es m b. (Monad m, Logging a `In` mods) => LogCat -> EffT mods es m b -> EffT mods es m b
+effAddLogCat :: forall a c mods es m b. (Monad m, In' c (Logging a) mods) => LogCat -> EffT' c mods es m b -> EffT' c mods es m b
 effAddLogCat logCat = localLogger @a (addLogCat logCat)
 {-# INLINE effAddLogCat #-}
 
@@ -196,7 +196,7 @@ effAddLogCat logCat = localLogger @a (addLogCat logCat)
 -- effAddLogCat' (LogCat ConnectionPool) $ do
 --   ...
 -- @
-effAddLogCat' :: forall mods es m b. (Monad m, Logging LogData `In` mods) => LogCat -> EffT mods es m b -> EffT mods es m b
+effAddLogCat' :: forall c mods es m b. (Monad m, In' c (Logging LogData) mods) => LogCat -> EffT' c mods es m b -> EffT' c mods es m b
 effAddLogCat' logCat = localLogger @LogData (addLogCat logCat)
 {-# INLINE effAddLogCat' #-}
 
@@ -232,6 +232,10 @@ isLogSubType p = Predicate $ \(LogCat (subType :: sub')) -> case eqT @sub @sub' 
   Just Refl -> p.getPredicate subType
   Nothing   -> False
 {-# INLINE isLogSubType #-}
+
+isLogCatName :: ML.ToLogStr n => n -> Predicate LogCat
+isLogCatName name = Predicate $ \logCat -> someLogCatName logCat == ML.toLogStr name
+{-# INLINE isLogCatName #-}
 
 -- | The Logging module type, a module `Logging a` provides logging capabilities for logs of type `a`
 type Logging :: Type -> Type
@@ -294,15 +298,15 @@ defaultLoadFromEnv logger mcl = do
 -- | Load an argument --log-level <level> from command line arguments,
 -- if none is provided, it will log everything (Maybe LogSeverity = Nothing)
 defaultLoadFromArgs :: Logger IO LogData -> Maybe (IO ()) -> [String] -> Either Text (ModuleInitData LoggingModule)
-defaultLoadFromArgs logger mcl []                = Right $ LoggerInitData logger Nothing mcl
-defaultLoadFromArgs logger mcl args@(_:tailArgs) = case
-  (do
-    ("--log-level", a1) <- zip args tailArgs
-    pure $ defaultStringToLogSeverity a1
-  ) of
-    (Right logLevel : _) -> Right $ LoggerInitData logger (Just logLevel) mcl
-    (Left err : _)       -> Left err
-    _                    -> Right $ LoggerInitData logger Nothing mcl
+defaultLoadFromArgs logger mcl []         = Right $ LoggerInitData logger Nothing mcl
+defaultLoadFromArgs logger mcl args@(_:_) = do
+  level    <- maybe (Right Nothing) (fmap Just) $ detectFlag "--log-level" defaultStringToLogSeverity args
+  types    <- sequence $ detectAllFlags "--log-type"    (\case "" -> Left "Empty log type"; s -> Right s) args
+  nonTypes <- sequence $ detectAllFlags "--no-log-type" (\case "" -> Left "Empty log type"; s -> Right s) args
+  let logger' = foldr ($) logger (  [ anyLogCat     (isLogCatName name) | name <- types ]
+                                 <> [ excludeLogCat (isLogCatName name) | name <- nonTypes ]
+                                 )
+  return $ LoggerInitData logger' level mcl
 {-# INLINABLE defaultLoadFromArgs #-}
 
 monadLoggerAdapter :: Logger IO LogData -> ML.Loc -> ML.LogSource -> ML.LogLevel -> ML.LogStr -> IO ()
