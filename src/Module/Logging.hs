@@ -56,6 +56,10 @@ class Typeable sub => IsLogCat (sub :: Type) where
   logTypeDisplay :: sub -> ML.LogStr
   {-# MINIMAL logTypeDisplay #-}
 
+instance IsLogCat Text where
+  logTypeDisplay = ML.toLogStr
+  {-# INLINE logTypeDisplay #-}
+
 -- | An exsitential type that wraps all logging categories, it is easy to define a new instance
 data LogCat where
   LogCat :: forall sub. IsLogCat sub => sub -> LogCat
