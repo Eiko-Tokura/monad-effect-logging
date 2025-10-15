@@ -11,11 +11,13 @@ import Control.Monad.Logger
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.TypeList
 import Data.Word
+import Data.Aeson (FromJSON, ToJSON)
 import Module.Logging
 import Module.RS.QQ
 import Probability.Foundation.XorShiftRNG
 
-newtype TraceId = TraceId { unTraceId :: Word64 } deriving (Eq, Ord, Show)
+newtype TraceId = TraceId { unTraceId :: Word64 }
+  deriving newtype (Eq, Ord, Show, FromJSON, ToJSON)
 
 instance IsLogCat TraceId where
   logTypeDisplay (TraceId tid) = "TID=" <> toLogStr tid
