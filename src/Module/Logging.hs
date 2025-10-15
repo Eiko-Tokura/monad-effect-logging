@@ -293,17 +293,17 @@ defaultStringToLogSeverity = \case
 {-# INLINABLE defaultStringToLogSeverity #-}
 
 -- | Load a log level from environment variable LOG_LEVEL,
-defaultLoadFromEnv :: Logger IO LogData -> Maybe (IO ()) -> IO (ModuleInitData LoggingModule)
-defaultLoadFromEnv logger mcl = do
+defaultLoggingFromEnv :: Logger IO LogData -> Maybe (IO ()) -> IO (ModuleInitData LoggingModule)
+defaultLoggingFromEnv logger mcl = do
   mLogLevel <- liftIO $ (readMaybe =<<) <$> lookupEnv "LOG_LEVEL"
   return $ LoggerInitData logger mLogLevel mcl
-{-# INLINABLE defaultLoadFromEnv #-}
+{-# INLINABLE defaultLoggingFromEnv #-}
 
 -- | Load an argument --log-level <level> from command line arguments,
 -- if none is provided, it will log everything (Maybe LogSeverity = Nothing)
-defaultLoadFromArgs :: Logger IO LogData -> Maybe (IO ()) -> [String] -> Either Text (ModuleInitData LoggingModule)
-defaultLoadFromArgs logger mcl []         = Right $ LoggerInitData logger Nothing mcl
-defaultLoadFromArgs logger mcl args@(_:_) = do
+defaultLoggingFromArgs :: Logger IO LogData -> Maybe (IO ()) -> [String] -> Either Text (ModuleInitData LoggingModule)
+defaultLoggingFromArgs logger mcl []         = Right $ LoggerInitData logger Nothing mcl
+defaultLoggingFromArgs logger mcl args@(_:_) = do
   level    <- maybe (Right Nothing) (fmap Just) $ detectFlag "--log-level" defaultStringToLogSeverity args
   types    <- sequence $ detectAllFlags "--log-type"    (\case "" -> Left "Empty log type"; s -> Right s) args
   nonTypes <- sequence $ detectAllFlags "--no-log-type" (\case "" -> Left "Empty log type"; s -> Right s) args
@@ -311,7 +311,7 @@ defaultLoadFromArgs logger mcl args@(_:_) = do
                                  <> [ excludeLogCat (isLogCatName name) | name <- nonTypes ]
                                  )
   return $ LoggerInitData logger' level mcl
-{-# INLINABLE defaultLoadFromArgs #-}
+{-# INLINABLE defaultLoggingFromArgs #-}
 
 monadLoggerAdapter :: Logger IO LogData -> ML.Loc -> ML.LogSource -> ML.LogLevel -> ML.LogStr -> IO ()
 monadLoggerAdapter logger loc src lev msg = _runLogger logger Log
