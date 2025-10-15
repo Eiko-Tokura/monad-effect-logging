@@ -51,6 +51,7 @@ library
     exposed-modules: Module.Logging
                    , Module.Logging.Logger
                    , Module.Logging.TraceId
+    ghc-options: -fexpose-all-unfoldings
 
     -- Modules included in this library but not exported.
     -- other-modules:
@@ -63,7 +64,7 @@ library
                  , aeson
                  , fast-logger
                  , lens
-                 , monad-effect
+                 , monad-effect >= 0.2 && < 0.3
                  , monad-logger
                  , stm
                  , text
