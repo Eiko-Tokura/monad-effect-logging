@@ -36,7 +36,7 @@ WithTraceId
 -- | Assign the provided traceId to the logging context
 withTraceId
   :: ( Monad m
-     , Logging LogData `In`    mods
+     , Logging m LogData `In`    mods
      , WithTraceId     `NotIn` mods
      , ConsFDataList FData (WithTraceId : mods)
      )
@@ -48,7 +48,7 @@ withTraceId tid = effAddLogCat' (LogCat tid) . runWithTraceId (WithTraceIdRead t
 withNewTraceId
   :: ( MonadIO m
      , TraceIdGen      `In`    mods
-     , Logging LogData `In`    mods
+     , Logging m LogData `In`    mods
      , WithTraceId     `NotIn` mods
      , ConsFDataList   FData   (WithTraceId : mods)
      )
