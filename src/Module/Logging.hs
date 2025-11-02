@@ -7,7 +7,7 @@
 module Module.Logging
   ( module Module.Logging
   , module Data.Functor.Contravariant
-  , ML.toLogStr
+  , ML.toLogStr, ML.LogStr
   ) where
 
 import Control.Applicative
