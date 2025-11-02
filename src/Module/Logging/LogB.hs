@@ -15,6 +15,7 @@ module Module.Logging.LogB
   , logLoc_
   , logs
   , logTH
+  , logTHIO
   ) where
 
 import Data.String (IsString(..))
@@ -73,15 +74,19 @@ logLoc_ src subTypeType msg = logLog (Log [LogCat subTypeType] (mempty @LogB & l
 {-# INLINE logLoc_ #-}
 
 -- | Simple logging function, provide one log type and a LogStr message
-log_ :: (MonadIO m, In' c (Logging m LogB) mods, IsLogCat subType) => subType -> LogBuilder -> EffT' c mods es m ()
+log_ :: (Monad m, In' c (Logging m LogB) mods, IsLogCat subType) => subType -> LogBuilder -> EffT' c mods es m ()
 log_ subTypeType msg = logLog (Log [LogCat subTypeType] (mempty @LogB & logMsg .~ msg))
 {-# INLINE log_ #-}
 
 -- | Log with multiple log types (wrapped in existantial constructor LogCat)
-logs :: (MonadIO m, In' c (Logging m LogB) mods) => [LogCat] -> LogBuilder -> EffT' c mods es m ()
+logs :: (Monad m, In' c (Logging m LogB) mods) => [LogCat] -> LogBuilder -> EffT' c mods es m ()
 logs logTypes msg = logLog (Log logTypes (mempty @LogB & logMsg .~ msg))
 {-# INLINE logs #-}
 
 -- | Template Haskell helper with location info
 logTH :: (IsLogCat subType, TH.Lift subType) => subType -> TH.Q TH.Exp
 logTH subType = [| logLoc_ $(TH.qLocation >>= TH.lift) $(TH.lift subType) |]
+
+-- | Template Haskell helper with location info, with m=IO
+logTHIO :: (IsLogCat subType, TH.Lift subType) => subType -> TH.Q TH.Exp
+logTHIO subType = [| logLoc_ @IO $(TH.qLocation >>= TH.lift) $(TH.lift subType) |]

@@ -262,6 +262,19 @@ data Logging m a
 
 type LoggingModule = Logging IO LogS -- standard logging module
 
+withLiftLogger
+  :: forall m n c a mods es b.
+  ( Monad m
+  , In' c (Logging m a) (Logging m a : mods)
+  , ConsFDataList c (Logging n a : mods)
+  , ConsFDataList c (Logging m a : mods)
+  )
+  => (forall x. m x -> n x) -> EffT' c (Logging n a : mods) es m b -> EffT' c (Logging m a : mods) es m b
+withLiftLogger lifter act = do
+  LoggingRead logger <- askModule @(Logging m a)
+  let logger' = liftLogger lifter logger
+  embedMods $ runEffTOuter_ (LoggingRead logger') LoggingState act
+
 instance Module (Logging m (a :: Type)) where
   newtype ModuleRead  (Logging m a) = LoggingRead
     { logging        :: Logger m a
