@@ -367,13 +367,25 @@ logData :: (MonadIO m, In' c LoggingModule mods) => LogData -> EffT' c mods es m
 logData logd = logLog (Log [] logd)
 {-# INLINE logData #-}
 
+logLoc_ :: (MonadIO m, In' c LoggingModule mods, IsLogCat subType) => ML.Loc -> subType -> ML.LogStr -> EffT' c mods es m ()
+logLoc_ src subTypeType msg = logLog (Log [LogCat subTypeType] (mempty & logMsg .~ msg & logLoc ?~ src))
+{-# INLINE logLoc_ #-}
+
+-- | Simple logging function, provide one log type and a LogStr message
 log_ :: (MonadIO m, In' c LoggingModule mods, IsLogCat subType) => subType -> ML.LogStr -> EffT' c mods es m ()
 log_ subTypeType msg = logLog (Log [LogCat subTypeType] (mempty & logMsg .~ msg))
 {-# INLINE log_ #-}
 
-logTH :: (IsLogCat subType, TH.Lift subType) => subType -> TH.Q TH.Exp
-logTH subType = [| log_ $(TH.lift subType) |]
+-- | Log with multiple log types (wrapped in existantial constructor LogCat)
+logs :: (MonadIO m, In' c LoggingModule mods) => [LogCat] -> ML.LogStr -> EffT' c mods es m ()
+logs logTypes msg = logLog (Log logTypes (mempty & logMsg .~ msg))
+{-# INLINE logs #-}
 
+-- | Template Haskell helper with location info
+logTH :: (IsLogCat subType, TH.Lift subType) => subType -> TH.Q TH.Exp
+logTH subType = [| logLoc_ $(TH.qLocation >>= TH.lift) $(TH.lift subType) |]
+
+-- | Apply 'show' to convert a value to LogStr
 toLogStrS :: Show a => a -> ML.LogStr
 toLogStrS = ML.toLogStr . show
 {-# INLINE toLogStrS #-}
