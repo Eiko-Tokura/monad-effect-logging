@@ -1,4 +1,4 @@
-{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE QuasiQuotes, DeriveLift #-}
 -- | This module provides functionality for handling trace IDs in logging.
 --
 --  A trace Id is a unique identifier used to trace and correlate log entries across different parts of a system.
@@ -14,7 +14,7 @@ import Data.Word
 import Data.Aeson (FromJSON, ToJSON)
 import Module.Logging
 import Module.RS.QQ
-import Probability.Foundation.XorShiftRNG
+import Module.Logging.TraceId.XorShiftRNG
 
 newtype TraceId = TraceId { unTraceId :: Word64 }
   deriving newtype (Eq, Ord, Show, FromJSON, ToJSON)
