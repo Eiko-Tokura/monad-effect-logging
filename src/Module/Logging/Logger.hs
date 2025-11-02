@@ -5,14 +5,17 @@ module Module.Logging.Logger
   , module System.Log.FastLogger
   ) where
 
+import Control.Monad
 import Control.Concurrent
 import Control.Concurrent.STM
-import Control.Monad (forever)
 import Control.Monad.Effect
 import Data.Time.Clock
 import Module.Logging
 import System.Log.FastLogger
+import System.Log.FastLogger.Internal (LogStr (..))
 import qualified Control.Monad.Logger as ML
+import qualified Data.ByteString.Builder as BB
+import qualified Data.ByteString.Lazy as BL
 import Data.List (foldl1')
 import Control.Exception (bracket)
 
@@ -37,6 +40,46 @@ createFastBaseLogger logT = liftIO $ uncurry BaseLogger <$> newFastLogger logT
 
 createStdoutBaseLogger :: MonadIO m => m (BaseLogger IO)
 createStdoutBaseLogger = createFastBaseLogger (LogStdout defaultBufSize)
+
+-- | A very simple logger that just prints to stdout **without buffering**.
+-- suitable for simple and fast-reaction applications
+createSimpleStdoutBaseLogger :: MonadIO m => m (BaseLogger IO)
+createSimpleStdoutBaseLogger = liftIO $ do
+  let logFunc (LogStr _ builder) = BL.putStr (BB.toLazyByteString (builder <> "\n"))
+  return $ BaseLogger logFunc (return ())
+{-# INLINE createSimpleStdoutBaseLogger #-}
+
+-- | A very simple concurrent logger that just prints to stdout **without buffering**.
+-- A cleanUp function is provided to make sure all logs are printed before exiting.
+createSimpleConcurrentStdoutBaseLogger :: MonadIO m => m (BaseLogger IO)
+createSimpleConcurrentStdoutBaseLogger = liftIO $ do
+  queue <- newTQueueIO
+  counter <- newTVarIO (0 :: Int)
+  -- ^ the caller increments this when logging atomically
+  -- logger checks this to see if it should exit
+  let logFunc (LogStr _ builder) = do
+        atomically $ do
+          writeTQueue queue builder
+          modifyTVar' counter (+1)
+      rawLogFunc builder = BL.putStr (BB.toLazyByteString (builder <> "\n"))
+      atomicLogFunc queue' = do
+        logStr <- atomically $ do
+          logStr <- readTQueue queue'
+          modifyTVar' counter (subtract 1)
+          return logStr
+        rawLogFunc logStr
+  let cleanUpFunc = do
+        remQ <- atomically $ do
+          r <- readTVar counter
+          if r == 0
+            then return Nothing
+            else do
+              b <- flushTQueue queue
+              writeTVar counter 0
+              return (Just b)
+        forM_ remQ (mapM_ rawLogFunc)
+  _ <- forkIO $ forever $ atomicLogFunc queue
+  return $ BaseLogger logFunc cleanUpFunc
 
 createStderrBaseLogger :: MonadIO m => m (BaseLogger IO)
 createStderrBaseLogger = createFastBaseLogger (LogStderr defaultBufSize)
@@ -87,15 +130,6 @@ logSimple LogData {..}
     <> _logMsg
   where displayPos (l, c) = toLogStr (show l <> ":" <> show c)
 {-# INLINE logSimple #-}
-
--- | A very simple function, make use of a TChan
-makeConcurrentLogger :: MonadIO m => Logger IO LogData -> m (Logger IO LogData)
-makeConcurrentLogger (Logger logger) = do
-  queue <- liftIO newTChanIO
-  _ <- liftIO $ forkIO $ forever $ do
-    logItem <- atomically $ readTChan queue
-    logger logItem
-  return $ Logger $ \logItem -> liftIO $ atomically $ writeTChan queue logItem
 
 -- $ Bracket pattern
 -- | This function is used to create a logger in a scoped manner.

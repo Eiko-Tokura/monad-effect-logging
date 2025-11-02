@@ -1,4 +1,4 @@
-{-# LANGUAGE QuasiQuotes, QuantifiedConstraints #-}
+{-# LANGUAGE QuasiQuotes #-}
 -- | This module provides functionality for handling trace IDs in logging.
 --
 --  A trace Id is a unique identifier used to trace and correlate log entries across different parts of a system.
