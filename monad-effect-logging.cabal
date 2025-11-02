@@ -71,6 +71,7 @@ library
                  , text
                  , time
                  , probabilist
+                 , template-haskell
 
     -- Directories containing source files.
     hs-source-dirs:   src

@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell, UndecidableInstances, AllowAmbiguousTypes, OverloadedRecordDot #-}
+{-# LANGUAGE TemplateHaskell, UndecidableInstances, AllowAmbiguousTypes, DeriveLift, OverloadedRecordDot #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 -- | We want a logger that supports open categories, open levels, open severities etc.
 -- so that we can filter on different levels for different categories
@@ -7,6 +7,7 @@
 module Module.Logging
   ( module Module.Logging
   , module Data.Functor.Contravariant
+  , ML.toLogStr
   ) where
 
 import Control.Applicative
@@ -25,6 +26,9 @@ import qualified Control.Monad.Logger as ML
 
 import System.Environment
 import Text.Read (readMaybe)
+
+import qualified Language.Haskell.TH as TH
+import qualified Language.Haskell.TH.Syntax as TH
 
 -- | so user can interpolate between levels easily
 --
@@ -100,11 +104,11 @@ instance Monoid LogData where
   {-# INLINE mempty #-}
 
 -- | Some default log types, you can easily define your own
-data    Debug = Debug
-data    Info  = Info
-data    Warn  = Warn
-data    Error = Error
-newtype Other = Other Text
+data    Debug = Debug  deriving TH.Lift
+data    Info  = Info   deriving TH.Lift
+data    Warn  = Warn   deriving TH.Lift
+data    Error = Error  deriving TH.Lift
+newtype Other = Other Text  deriving TH.Lift
 
 instance IsLogCat Debug where severity _ = Just 1; logTypeDisplay _ = "DEBUG"
 instance IsLogCat Info  where severity _ = Just 2; logTypeDisplay _ = "INFO"
@@ -354,3 +358,29 @@ mlLogLevelToLogCat ML.LevelWarn      = LogCat Warn
 mlLogLevelToLogCat ML.LevelError     = LogCat Error
 mlLogLevelToLogCat (ML.LevelOther t) = LogCat (Other t)
 {-# INLINE mlLogLevelToLogCat #-}
+
+logLog :: (MonadIO m, In' c LoggingModule mods) => Log LogData -> EffT' c mods es m ()
+logLog logd = asksModule @(Logging IO LogData) (_runLogger . logging) >>= (\action -> liftIO $ action logd)
+{-# INLINABLE logLog #-}
+
+logData :: (MonadIO m, In' c LoggingModule mods) => LogData -> EffT' c mods es m ()
+logData logd = logLog (Log [] logd)
+{-# INLINE logData #-}
+
+log_ :: (MonadIO m, In' c LoggingModule mods, IsLogCat subType) => subType -> ML.LogStr -> EffT' c mods es m ()
+log_ subTypeType msg = logLog (Log [LogCat subTypeType] (mempty & logMsg .~ msg))
+{-# INLINE log_ #-}
+
+logTH :: (IsLogCat subType, TH.Lift subType) => subType -> TH.Q TH.Exp
+logTH subType = [| log_ $(TH.lift subType) |]
+
+toLogStrS :: Show a => a -> ML.LogStr
+toLogStrS = ML.toLogStr . show
+{-# INLINE toLogStrS #-}
+
+{- TODO:
+ - Consider adding a more primitive LogVal type that holds values without converting to LogStr immediately
+ - This would allow us to control the rendering of the LogStr at the final logging stage
+ -
+ - For example we could have a showed value of JSON being pretty printed at console, but compacted when logged to file
+ -}

@@ -38,6 +38,7 @@ instance Applicative m => Monoid (BaseLogger m) where
 createFastBaseLogger :: MonadIO m => LogType -> m (BaseLogger IO)
 createFastBaseLogger logT = liftIO $ uncurry BaseLogger <$> newFastLogger logT
 
+-- | Uses the logger from fast-logger with default buffer-size
 createStdoutBaseLogger :: MonadIO m => m (BaseLogger IO)
 createStdoutBaseLogger = createFastBaseLogger (LogStdout defaultBufSize)
 
@@ -45,7 +46,7 @@ createStdoutBaseLogger = createFastBaseLogger (LogStdout defaultBufSize)
 -- suitable for simple and fast-reaction applications
 createSimpleStdoutBaseLogger :: MonadIO m => m (BaseLogger IO)
 createSimpleStdoutBaseLogger = liftIO $ do
-  let logFunc (LogStr _ builder) = BL.putStr (BB.toLazyByteString (builder <> "\n"))
+  let logFunc (LogStr _ builder) = BL.putStr (BB.toLazyByteString builder)
   return $ BaseLogger logFunc (return ())
 {-# INLINE createSimpleStdoutBaseLogger #-}
 
@@ -61,7 +62,7 @@ createSimpleConcurrentStdoutBaseLogger = liftIO $ do
         atomically $ do
           writeTQueue queue builder
           modifyTVar' counter (+1)
-      rawLogFunc builder = BL.putStr (BB.toLazyByteString (builder <> "\n"))
+      rawLogFunc builder = BL.putStr (BB.toLazyByteString builder)
       atomicLogFunc queue' = do
         logStr <- atomically $ do
           logStr <- readTQueue queue'
@@ -81,9 +82,11 @@ createSimpleConcurrentStdoutBaseLogger = liftIO $ do
   _ <- forkIO $ forever $ atomicLogFunc queue
   return $ BaseLogger logFunc cleanUpFunc
 
+-- | Uses the logger from fast-logger with default buffer-size
 createStderrBaseLogger :: MonadIO m => m (BaseLogger IO)
 createStderrBaseLogger = createFastBaseLogger (LogStderr defaultBufSize)
 
+-- | Uses the logger from fast-logger with default buffer-size
 createFileLogger :: MonadIO m => FilePath -> m (BaseLogger IO)
 createFileLogger fp = createFastBaseLogger (LogFile (FileLogSpec fp (512 * 1024 * 1024) 3) defaultBufSize)
 
