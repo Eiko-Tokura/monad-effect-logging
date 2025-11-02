@@ -49,6 +49,8 @@ library
 
     -- Modules exported by the library.
     exposed-modules: Module.Logging
+                   , Module.Logging.LogS
+                   , Module.Logging.LogB
                    , Module.Logging.Logger
                    , Module.Logging.TraceId
     ghc-options: -fexpose-all-unfoldings

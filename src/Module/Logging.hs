@@ -7,7 +7,6 @@
 module Module.Logging
   ( module Module.Logging
   , module Data.Functor.Contravariant
-  , ML.toLogStr, ML.LogStr
   ) where
 
 import Control.Applicative
@@ -27,7 +26,6 @@ import qualified Control.Monad.Logger as ML
 import System.Environment
 import Text.Read (readMaybe)
 
-import qualified Language.Haskell.TH as TH
 import qualified Language.Haskell.TH.Syntax as TH
 
 -- | so user can interpolate between levels easily
@@ -81,26 +79,35 @@ data Log a = Log
   , _logContent :: a
   } deriving (Functor)
 
-data LogData = LogData
+type LogS = LogMsg ML.LogStr
+
+type LogData = LogS
+{-# DEPRECATED LogData "Use LogS instead" #-}
+
+data LogMsg a = LogMsg
   { _logLoc    :: Maybe ML.Loc
   , _logSource :: Maybe ML.LogSource
-  , _logMsg    :: ML.LogStr
+  , _logMsg    :: a
   }
 
 makeLenses ''Log
-makeLenses ''LogData
+makeLenses ''LogMsg
 makeLenses ''Loc
 
-instance Semigroup LogData where
-  l1 <> l2 = LogData
+instance Functor LogMsg where
+  fmap f logMsg' = logMsg' { _logMsg = f (_logMsg logMsg') }
+  {-# INLINE fmap #-}
+
+instance Semigroup a => Semigroup (LogMsg a) where
+  l1 <> l2 = LogMsg
     { _logLoc = l1 ^. logLoc <|> l2 ^. logLoc
     , _logSource = l1 ^. logSource <|> l2 ^. logSource
     , _logMsg = l1 ^. logMsg <> l2 ^. logMsg
     }
   {-# INLINE (<>) #-}
 
-instance Monoid LogData where
-  mempty = LogData Nothing Nothing mempty
+instance Monoid a => Monoid (LogMsg a) where
+  mempty = LogMsg Nothing Nothing mempty
   {-# INLINE mempty #-}
 
 -- | Some default log types, you can easily define your own
@@ -196,20 +203,20 @@ addLogCat t = over runLogger (. over logType (t:))
 
 -- | Add a log category to the log in EffT
 -- @
--- effAddLogCat @LogData (LogCat ConnectionPool) $ do
+-- effAddLogCat @LogS (LogCat ConnectionPool) $ do
 --   ...
 -- @
 effAddLogCat :: forall a c mods es m b. (Monad m, In' c (Logging m a) mods) => LogCat -> EffT' c mods es m b -> EffT' c mods es m b
 effAddLogCat logCat = localLogger @a (addLogCat logCat)
 {-# INLINE effAddLogCat #-}
 
--- | Add a log category to the log in EffT (defaulting to In (Logging m LogData) mods)
+-- | Add a log category to the log in EffT (defaulting to In (Logging m LogS) mods)
 -- @
 -- effAddLogCat' (LogCat ConnectionPool) $ do
 --   ...
 -- @
-effAddLogCat' :: forall c mods es m b. (Monad m, In' c (Logging m LogData) mods) => LogCat -> EffT' c mods es m b -> EffT' c mods es m b
-effAddLogCat' logCat = localLogger @LogData (addLogCat logCat)
+effAddLogCat' :: forall c mods es m b. (Monad m, In' c (Logging m LogS) mods) => LogCat -> EffT' c mods es m b -> EffT' c mods es m b
+effAddLogCat' logCat = localLogger @LogS (addLogCat logCat)
 {-# INLINE effAddLogCat' #-}
 
 filterLogCats :: Applicative m => Predicate [LogCat] -> Logger m a -> Logger m a
@@ -253,7 +260,7 @@ isLogCatName name = Predicate $ \logCat -> someLogCatName logCat == ML.toLogStr 
 type Logging :: (Type -> Type) -> Type -> Type
 data Logging m a
 
-type LoggingModule = Logging IO LogData -- standard logging module
+type LoggingModule = Logging IO LogS -- standard logging module
 
 instance Module (Logging m (a :: Type)) where
   newtype ModuleRead  (Logging m a) = LoggingRead
@@ -262,8 +269,8 @@ instance Module (Logging m (a :: Type)) where
   data    ModuleState (Logging m a) = LoggingState
 
 runLogging
-  :: (ConsFDataList c (LoggingModule : mods), Monad m) => Logger IO LogData
-  -> EffT' c (LoggingModule : mods) es m a
+  :: (ConsFDataList c (Logging m logS : mods), Monad m) => Logger m logS
+  -> EffT' c (Logging m logS : mods) es m a
   -> EffT' c mods es m a
 runLogging logger = runEffTOuter_ (LoggingRead logger) LoggingState
 {-# INLINE runLogging #-}
@@ -301,7 +308,7 @@ defaultStringToLogSeverity = \case
 {-# INLINABLE defaultStringToLogSeverity #-}
 
 -- | Load a log level from environment variable LOG_LEVEL,
-defaultLoggingFromEnv :: Logger IO LogData -> Maybe (IO ()) -> IO (ModuleInitData LoggingModule)
+defaultLoggingFromEnv :: Logger IO LogS -> Maybe (IO ()) -> IO (ModuleInitData LoggingModule)
 defaultLoggingFromEnv logger mcl = do
   mLogLevel <- liftIO $ (readMaybe =<<) <$> lookupEnv "LOG_LEVEL"
   return $ LoggerInitData logger mLogLevel mcl
@@ -309,7 +316,7 @@ defaultLoggingFromEnv logger mcl = do
 
 -- | Load an argument --log-level <level> from command line arguments,
 -- if none is provided, it will log everything (Maybe LogSeverity = Nothing)
-defaultLoggingFromArgs :: Logger IO LogData -> Maybe (IO ()) -> [String] -> Either Text (ModuleInitData LoggingModule)
+defaultLoggingFromArgs :: Logger IO LogS -> Maybe (IO ()) -> [String] -> Either Text (ModuleInitData LoggingModule)
 defaultLoggingFromArgs logger mcl []         = Right $ LoggerInitData logger Nothing mcl
 defaultLoggingFromArgs logger mcl args@(_:_) = do
   level    <- maybe (Right Nothing) (fmap Just) $ detectFlag "--log-level" defaultStringToLogSeverity args
@@ -321,10 +328,10 @@ defaultLoggingFromArgs logger mcl args@(_:_) = do
   return $ LoggerInitData logger' level mcl
 {-# INLINABLE defaultLoggingFromArgs #-}
 
-monadLoggerAdapter :: Logger m LogData -> ML.Loc -> ML.LogSource -> ML.LogLevel -> ML.LogStr -> m ()
+monadLoggerAdapter :: Logger m LogS -> ML.Loc -> ML.LogSource -> ML.LogLevel -> ML.LogStr -> m ()
 monadLoggerAdapter logger loc src lev msg = _runLogger logger Log
   { _logType = [mlLogLevelToLogCat lev]
-  , _logContent = LogData
+  , _logContent = LogMsg
       { _logLoc    = Just loc
       , _logSource = Just src
       , _logMsg    = msg
@@ -333,16 +340,16 @@ monadLoggerAdapter logger loc src lev msg = _runLogger logger Log
 {-# INLINE monadLoggerAdapter #-}
 
 -- | This provides an interface to MonadLogger
-instance (Monad m, In' c (Logging m LogData) mods) => ML.MonadLogger (EffT' c mods es m) where
+instance (Monad m, In' c (Logging m LogS) mods) => ML.MonadLogger (EffT' c mods es m) where
   monadLoggerLog loc logsource loglevel msg = do
-    LoggingRead logger <- queryModule @(Logging m LogData)
+    LoggingRead logger <- queryModule @(Logging m LogS)
     lift $ monadLoggerAdapter logger loc logsource loglevel (ML.toLogStr msg)
   {-# INLINE monadLoggerLog #-}
 
-instance (m ~ IO, In' c (Logging m LogData) mods) => ML.MonadLoggerIO (EffT' c mods es m) where
-  askLoggerIO = queriesModule @(Logging m LogData) $ (\f loc src lev str -> f
+instance (m ~ IO, In' c (Logging m LogS) mods) => ML.MonadLoggerIO (EffT' c mods es m) where
+  askLoggerIO = queriesModule @(Logging m LogS) $ (\f loc src lev str -> f
     $ Log [mlLogLevelToLogCat lev]
-    $ LogData
+    $ LogMsg
       { _logLoc    = Just loc
       , _logSource = Just src
       , _logMsg    = str
@@ -359,40 +366,11 @@ mlLogLevelToLogCat ML.LevelError     = LogCat Error
 mlLogLevelToLogCat (ML.LevelOther t) = LogCat (Other t)
 {-# INLINE mlLogLevelToLogCat #-}
 
-logLog :: (MonadIO m, In' c LoggingModule mods) => Log LogData -> EffT' c mods es m ()
-logLog logd = asksModule @(Logging IO LogData) (_runLogger . logging) >>= (\action -> liftIO $ action logd)
+logLog :: forall a c mods es m. (Monad m, In' c (Logging m a) mods) => Log a -> EffT' c mods es m ()
+logLog logd = asksModule @(Logging m a) (_runLogger . logging) >>= (\action -> lift $ action logd)
 {-# INLINABLE logLog #-}
-
-logData :: (MonadIO m, In' c LoggingModule mods) => LogData -> EffT' c mods es m ()
-logData logd = logLog (Log [] logd)
-{-# INLINE logData #-}
-
-logLoc_ :: (MonadIO m, In' c LoggingModule mods, IsLogCat subType) => ML.Loc -> subType -> ML.LogStr -> EffT' c mods es m ()
-logLoc_ src subTypeType msg = logLog (Log [LogCat subTypeType] (mempty & logMsg .~ msg & logLoc ?~ src))
-{-# INLINE logLoc_ #-}
-
--- | Simple logging function, provide one log type and a LogStr message
-log_ :: (MonadIO m, In' c LoggingModule mods, IsLogCat subType) => subType -> ML.LogStr -> EffT' c mods es m ()
-log_ subTypeType msg = logLog (Log [LogCat subTypeType] (mempty & logMsg .~ msg))
-{-# INLINE log_ #-}
-
--- | Log with multiple log types (wrapped in existantial constructor LogCat)
-logs :: (MonadIO m, In' c LoggingModule mods) => [LogCat] -> ML.LogStr -> EffT' c mods es m ()
-logs logTypes msg = logLog (Log logTypes (mempty & logMsg .~ msg))
-{-# INLINE logs #-}
-
--- | Template Haskell helper with location info
-logTH :: (IsLogCat subType, TH.Lift subType) => subType -> TH.Q TH.Exp
-logTH subType = [| logLoc_ $(TH.qLocation >>= TH.lift) $(TH.lift subType) |]
 
 -- | Apply 'show' to convert a value to LogStr
 toLogStrS :: Show a => a -> ML.LogStr
 toLogStrS = ML.toLogStr . show
 {-# INLINE toLogStrS #-}
-
-{- TODO:
- - Consider adding a more primitive LogVal type that holds values without converting to LogStr immediately
- - This would allow us to control the rendering of the LogStr at the final logging stage
- -
- - For example we could have a showed value of JSON being pretty printed at console, but compacted when logged to file
- -}

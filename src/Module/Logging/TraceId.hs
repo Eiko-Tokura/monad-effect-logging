@@ -1,4 +1,4 @@
-{-# LANGUAGE QuasiQuotes, DeriveLift #-}
+{-# LANGUAGE AllowAmbiguousTypes, QuasiQuotes, DeriveLift #-}
 -- | This module provides functionality for handling trace IDs in logging.
 --
 --  A trace Id is a unique identifier used to trace and correlate log entries across different parts of a system.
@@ -35,28 +35,43 @@ WithTraceId
 
 -- | Assign the provided traceId to the logging context
 withTraceId
-  :: ( Monad m
-     , Logging m LogData `In`    mods
-     , WithTraceId     `NotIn` mods
+  :: forall log m mods es a.
+     ( Monad m
+     , Logging m log `In`    mods
+     , WithTraceId   `NotIn` mods
      , ConsFDataList FData (WithTraceId : mods)
      )
   => TraceId -> EffT (WithTraceId : mods) es m a -> EffT mods es m a
-withTraceId tid = effAddLogCat' (LogCat tid) . runWithTraceId (WithTraceIdRead tid)
+withTraceId tid = effAddLogCat @log (LogCat tid) . runWithTraceId (WithTraceIdRead tid)
 {-# INLINE withTraceId #-}
+
+-- | Specialized for log = LogS
+withTraceId'
+  :: forall log m mods es a.
+     ( Monad m
+     , Logging m log `In`    mods
+     , WithTraceId   `NotIn` mods
+     , ConsFDataList FData (WithTraceId : mods)
+     , log ~ LogS
+     )
+  => TraceId -> EffT (WithTraceId : mods) es m a -> EffT mods es m a
+withTraceId' = withTraceId @log
+{-# INLINE withTraceId' #-}
 
 -- | Assign new traceId using the provided TraceIdGen module
 withNewTraceId
-  :: ( MonadIO m
-     , TraceIdGen      `In`    mods
-     , Logging m LogData `In`    mods
-     , WithTraceId     `NotIn` mods
-     , ConsFDataList   FData   (WithTraceId : mods)
+  :: forall log m mods es a.
+     ( MonadIO m
+     , TraceIdGen     `In`    mods
+     , Logging m log  `In`    mods
+     , WithTraceId    `NotIn` mods
+     , ConsFDataList  FData   (WithTraceId : mods)
      )
   => EffT (WithTraceId : mods) es m a -> EffT mods es m a
 withNewTraceId act = do
   newTidIO <- asksModule newTraceId
   newTrace <- liftIO     newTidIO
-  withTraceId newTrace act
+  withTraceId @log newTrace act
 {-# INLINE withNewTraceId #-}
 
 -- | Using a global XorShift random number generator for traceId
