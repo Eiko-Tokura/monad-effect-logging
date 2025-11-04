@@ -1,0 +1,156 @@
+# Flexible Logging with Monad-Effect
+
+`monad-effect-logging` is a flexible logging system utilizing the `monad-effect` effect system for Haskell, it gives you very fine control over the logging behavior.
+
+## Definition
+
+```haskell
+import qualified Control.Monad.Logger as ML
+
+data Logging m a
+
+data Log a = Log
+  { _logType    :: [LogCat]
+  , _logContent :: a
+  } deriving (Functor)
+
+data LogMsg a = LogMsg
+  { _logLoc    :: Maybe ML.Loc
+  , _logSource :: Maybe ML.LogSource
+  , _logMsg    :: a
+  }
+```
+
+A `Logger m a` is just a function that takes a `Log a` and produces an effect in `m ()`.
+
+```haskell
+type Logger :: (Type -> Type) -> Type -> Type
+newtype Logger m a = Logger
+  { _runLogger :: Log a -> m ()
+  }
+```
+
+## Features
+
+I developed it by using it and changing it to meet my needs. It solves the following problems:
+
+### Separation Of Logs and Rendering
+
+Sometimes I want to write logs to different files, or sending logs to stdout and files at the same time. I wish I can use the `pretty-simple` pretty print with color in the terminal, but no color in the log files.
+
+This means we have to separate log generation and log rendering, we can do exactly that: we provide two default Loggings styles in `Module.Logging.LogS` which uses `Logger m (LogMsg LogStr)` and `Module.Logging.LogB` which uses `Logger m (LogMsg LogBuilder)` (allows you to separate log generation and rendering).
+
+See `Module.Logging.LogB` for relevant functions and types. Here is an example:
+
+```haskell
+import Control.Monad.Effect
+import Module.RS
+import Module.Logging
+import Module.Logging.LogB
+import Module.Logging.Logger
+import Text.Pretty.Simple (pShow, pShowNoColor)
+
+runApp :: EffT '[RModule ProxyState, RModule ProxySettings, LoggingModuleB] NoError IO () -> IO ()
+runApp app = do
+  opts :: ProxyOptions Unwrapped <- unwrapRecord "Haskell Proxy Server" -- read command line options
+  case optionsToSettings opts of
+    Nothing -> putStrLn "Invalid options provided."
+    Just settings -> do
+      baseStdLogger <- useBaseLogger (logWithRendering (renderUsing (toLogStr . pShow)) . simpleLogger True)
+        <$> createSimpleConcurrentStdoutBaseLogger
+      baseFileLogger <- useBaseLogger (logWithRendering (renderUsing (toLogStr . pShowNoColor)) . simpleLogger True)
+        <$> createFileLogger "proxy.log"
+      let logger = baseStdLogger <> baseFileLogger :: LoggerWithCleanup IO LogB
+      runEffT00 $ withLogger logger $ do
+        state <- initializeState settings
+        runRModule settings $ runRModule state app
+
+main :: IO ()
+main = runApp $ do
+  activeConnections <- liftIO $ newTVarIO M.empty
+  $(logTH Info) "Launching OwO"
+  settings <- askR @ProxySettings
+  $(logTH Info) $ "Options:" <> logShow settings
+  traceId <- liftIO $ newTVarIO (0 :: Word64)
+  -- | A Socket is a communication endpoint.
+  bracketEffT (liftIO $ socket AF_INET Stream defaultProtocol)
+    (\s -> do
+      liftIO $ close s
+      $(logTH Info) "Main Socket Closed."
+      threadIds <- liftIO $ M.elems <$> readTVarIO activeConnections
+      forM_ threadIds $ \t -> do
+        liftIO $ killThread t
+        $(logTH Info) $ "Killed thread: " <> logShow t
+    )
+    $ \sock -> do
+    -- ... Rest of the code
+```
+
+Those `logShow` does not immediately show anything, they are only rendered when the log is actually written to the output, using the specified rendering function.
+
+### Pure Logging
+
+Logging typically works in `IO`, but sometimes I need a complex pure function state machine that outputs diagnostics. It would be great if I don't need to change anything inside the function, using the same logging utilities. The parametrized monad field of the logging effect allows you to use a pure monad (for example writer or state monads) to collect the logs, without needing to change anything inside the function (only need to change how you run it).
+
+```haskell
+eventHandler
+  :: (Monad pureMonad)
+  => InputEvent
+  -> EffT
+      [ Logging pureMonad LogData -- ^ We will use logging to generate diagnostics
+      , EventState                -- ^ We need to read and update the state
+      ]
+      [ ErrorText "not-allowed"
+      ]
+      pureMonad
+      [OutputCommands]      -- ^ Output commands from the event module
+```
+
+### Extensible Log Categories
+
+You can easily define your own log categories, not just `Debug`, `Info`, `Warn`, `Error`. A log message can have multiple categories, you can add category at anytime using `effAddLogCat`, these types can be used to filter logs later.
+
+```haskell
+import Module.Logging as L
+import Language.Haskell.TH.Syntax (Lift)
+
+data ProxyLog = Bytes | Logic deriving (Show, Eq, Lift)
+instance IsLogCat ProxyLog where
+  severity Bytes = severity L.Debug
+  severity Logic = severity L.Info
+  logTypeDisplay Bytes = "BYTES"
+  logTypeDisplay Logic = "LOGIC"
+```
+
+The `Lift` class is only necessary if you want to use them inside `logTH` template haskell utilities, otherwise you can remove it.
+
+### Compatible With `monad-logger`
+
+You can use all utilities from `monad-logger` inside the `Logging m LogS` effect here since we implement the `MonadLogger` and `MonadLoggerIO` class for it. Although we recommend using the logging utilities provided in `Module.Logging.LogS` and `Module.Logging.LogB`.
+
+```haskell
+botInstanceToModule :: BotInstance -> EffT '[LoggingModule] NoError IO BotModules
+botInstanceToModule bot@(BotInstance runFlag identityFlags commandFlags mode proxyFlags logFlags watchDogFlags _) = do
+    $(logInfo) $ "\n### Starting bot instance: " <> tshow bot
+    $(logInfo) $ "Running mode: "   <> tshow mode
+    $(logInfo) $ "Running flags: "  <> tshow runFlag
+    $(logInfo) $ "Identity flags: " <> tshow identityFlags
+    $(logInfo) $ "Command flags: "  <> tshow commandFlags
+    $(logInfo) $ "Proxy flags: "    <> tshow proxyFlags
+    $(logInfo) $ "Log flags: "      <> tshow logFlags
+    $(logInfo) $ "WatchDog flags: " <> tshow watchDogFlags
+    let mGlobalSysMsg = listToMaybe [ pack sysMsg | UseSysMsg sysMsg <- identityFlags ]
+        withDefault def [] = def
+        withDefault _ xs = xs
+        botModules = BotModules
+          { canUseGroupCommands   = withDefault (identifier <$> allGroupCommands)   (coerce commandFlags)
+          , canUsePrivateCommands = withDefault (identifier <$> allPrivateCommands) (coerce commandFlags)
+          , nameOfBot = BotName $ listToMaybe [ nameBot | UseName nameBot <- identityFlags ]
+          , botId = fromMaybe 0 $ listToMaybe [ idBot | UseId idBot <- identityFlags ]
+          , globalSysMsg = mGlobalSysMsg
+          , proxyTChans = []
+          , logFile = [ logFile | LogFlag logFile <- logFlags ]
+          , botInstance = bot
+          }
+    return botModules
+```
