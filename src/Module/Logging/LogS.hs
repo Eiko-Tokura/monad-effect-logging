@@ -73,6 +73,6 @@ logsIO :: (MonadIO m, In' c (Logging IO LogS) mods) => [LogCat] -> ML.LogStr -> 
 logsIO logTypes = baseTransform liftIO . logs logTypes
 {-# INLINE logsIO #-}
 
--- | Template Haskell helper with location info, with m=IO
+-- | Template Haskell helper with location info, with MonadIO
 logTHIO :: (IsLogCat subType, TH.Lift subType) => subType -> TH.Q TH.Exp
 logTHIO subType = [| baseTransform liftIO . logLoc_ @IO $(TH.qLocation >>= TH.lift) $(TH.lift subType) |]

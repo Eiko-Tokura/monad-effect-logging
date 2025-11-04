@@ -2,6 +2,7 @@
 -- | Some simple combinators to build your logger
 module Module.Logging.Logger
   ( module Module.Logging.Logger
+  -- * Re-exporting fast-logger
   , module System.Log.FastLogger
   ) where
 
@@ -20,7 +21,7 @@ import Data.List (foldl1')
 import Control.Exception (bracket)
 
 -- | Logger with a cleanup function
-data LoggerWithCleanup m log = LoggerWithCleanup 
+data LoggerWithCleanup m log = LoggerWithCleanup
   { baseLogFunc :: log -> m ()
   , cleanUpFunc :: m ()
   }
@@ -30,7 +31,13 @@ useBaseLogger makeLogger (LoggerWithCleanup logFunc cleanUp) =
   LoggerWithCleanup (_runLogger $ makeLogger logFunc) cleanUp
 {-# INLINE useBaseLogger #-}
 
-liftBaseLogger :: (m () -> n ()) -> LoggerWithCleanup m LogStr -> LoggerWithCleanup n LogStr
+-- | Primitive version of 'useBaseLogger'
+useBaseLogger' :: Monad m => (Log logS -> m LogStr) -> LoggerWithCleanup m LogStr -> LoggerWithCleanup m (Log logS)
+useBaseLogger' makeLogger (LoggerWithCleanup logFunc cleanUp) =
+  LoggerWithCleanup (makeLogger >=> logFunc) cleanUp
+{-# INLINE useBaseLogger' #-}
+
+liftBaseLogger :: (m () -> n ()) -> LoggerWithCleanup m log -> LoggerWithCleanup n log
 liftBaseLogger nat (LoggerWithCleanup f c) = LoggerWithCleanup (nat . f) (nat c)
 {-# INLINE liftBaseLogger #-}
 
@@ -41,7 +48,7 @@ instance Applicative m => Monoid (LoggerWithCleanup m log) where
   mempty = LoggerWithCleanup (const $ pure ()) (pure ())
   {-# INLINE mempty #-}
 
--- | It doesn't mean it is really fast, just because it is imported from fast-logger
+-- | It doesn't mean it is really fast, called 'FastBaseLogger' because it is imported from fast-logger
 createFastBaseLogger :: MonadIO m => LogType -> m (LoggerWithCleanup IO LogStr)
 createFastBaseLogger logT = liftIO $ uncurry LoggerWithCleanup <$> newFastLogger logT
 
@@ -50,7 +57,7 @@ createStdoutBaseLogger :: MonadIO m => m (LoggerWithCleanup IO LogStr)
 createStdoutBaseLogger = createFastBaseLogger (LogStdout defaultBufSize)
 
 -- | A very simple logger that just prints to stdout **without buffering**.
--- suitable for simple and fast-reaction applications
+-- Inlines a putStr function. Suitable for simple applications
 createSimpleStdoutBaseLogger :: MonadIO m => m (LoggerWithCleanup IO LogStr)
 createSimpleStdoutBaseLogger = liftIO $ do
   let logFunc (LogStr _ builder) = BL.putStr (BB.toLazyByteString builder)
@@ -108,15 +115,16 @@ simpleLogger time
   . baseToLogger
 
 -- | Render the inner data type into LogStr and pass to the provided logger accepting LogStr.
+-- @
+-- logWithRendering renderB = contramap $ fmap renderB
+-- @
 --
 -- Example:
 -- @
 -- logWithRendering someRenderFunc (simpleLogger False baseLogFunc) :: Logger m (LogMsg b)
 -- @
 logWithRendering :: (b -> LogStr) -> Logger m LogS -> Logger m (LogMsg b)
-logWithRendering renderB (Logger logFunc) = Logger $ \logB -> do
-  let logS = fmap renderB <$> logB
-  logFunc logS
+logWithRendering renderB = contramap $ fmap renderB
 {-# INLINE logWithRendering #-}
 
 -- | simply apply the provided function to the log string
@@ -124,7 +132,7 @@ baseToLogger :: (LogStr -> m ()) -> Logger m LogStr
 baseToLogger baseIO = Logger $ \(Log _ str) -> baseIO str
 {-# INLINE baseToLogger #-}
 
--- | add the types of the log to the log string on the left
+-- | Modifies LogStr: add the types of the log to the log string on the left
 typedLogger :: Logger m LogStr -> Logger m LogStr
 typedLogger (Logger logFunc) = Logger $ \(Log types logStr) -> do
   let typeNames = map someLogCatName types
@@ -142,7 +150,7 @@ timeLogger (Logger logger) = Logger $ \(Log types logStr) -> do
   logger $ Log types (timeStr <> "|" <> logStr)
 {-# INLINE timeLogger #-}
 
--- | format the log data into a simple log string
+-- | format the log data into a simple log string, utilizing log types, and location info (if any)
 logSimple :: LogS -> LogStr
 logSimple LogMsg {..}
     =  maybe "" ((<> ",") . toLogStr . ML.loc_filename) _logLoc
