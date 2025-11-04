@@ -117,6 +117,37 @@ eventHandler
 You can easily define your own log categories, not just `Debug`, `Info`, `Warn`, `Error`. A log message can have multiple categories, you can add category at anytime using `effAddLogCat`, these types can be used to filter logs later.
 
 ```haskell
+-- | An exsitential type that wraps all logging categories, it is easy to define a new instance
+data LogCat where
+  LogCat :: forall sub. IsLogCat sub => sub -> LogCat
+
+-- | So every module can have its own logging category type, for example
+-- Database module can have `data Database` used as a log type
+--
+-- and have a subtype
+-- @
+-- data DatabaseSubType = ConnectionPool | Query | Migration | Cursor deriving (Show, Eq)
+-- @
+--
+-- you can then write instance
+--
+-- @
+-- instance IsLogCat DatabaseSubType where
+--   severity _    = Nothing
+--   logTypeDisplay _ = "DB"
+-- @
+class Typeable sub => IsLogCat (sub :: Type) where
+  severity :: sub -> Maybe LogSeverity
+  severity _ = Nothing
+  {-# INLINE severity #-}
+  -- | This is used for display only
+  logTypeDisplay :: sub -> ML.LogStr
+  {-# MINIMAL logTypeDisplay #-}
+```
+
+Here is an example of defining your own log category `ProxyLog`:
+
+```haskell
 import Module.Logging as L
 import Language.Haskell.TH.Syntax (Lift)
 
@@ -129,6 +160,14 @@ instance IsLogCat ProxyLog where
 ```
 
 The `Lift` class is only necessary if you want to use them inside `logTH` template haskell utilities, otherwise you can remove it.
+
+To use them, using functions in `Module.Logging.LogS` or `Module.Logging.LogB`, under corresponding logging context:
+
+```haskell
+do
+  $(logTH Bytes) "Sent 1024 bytes to client"
+  $(logTH Logic) "User logged in successfully"
+```
 
 ### Compatible With `monad-logger`
 

@@ -176,8 +176,6 @@ withLoggerCleanup (LoggerWithCleanup logger cleanUp) action = bracketEffT
 -- $ Bracket pattern
 -- | This function is used to create a logger in a scoped manner.
 -- It takes care of creating and cleaning up the base logger.
---
--- Hint: use Ap and <> to combine multiple base loggers in IO (LoggerWithCleanup IO LogStr)
 withBaseLogger
   :: (ConsFDataList c (Logging m (LogMsg logS) : mods), Monad m, MonadMask m)
   => m (LoggerWithCleanup m LogStr)               -- ^ specify a base logger
