@@ -12,10 +12,10 @@ name:               monad-effect-logging
 version:            0.1.0.0
 
 -- A short (one-line) description of the package.
--- synopsis:
+synopsis: A flexible logging system utilizing the `monad-effect` effect system.
 
 -- A longer description of the package.
--- description:
+description: A flexible logging system utilizing the `monad-effect` effect system, it gives you very fine control over the logging behavior, including custom categories, separation of log generation and rendering, pure logging effect, compatibility with monad-logger, trace-id support, etc.
 
 -- The license under which the package is released.
 license:            BSD-3-Clause

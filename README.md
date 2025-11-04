@@ -67,7 +67,7 @@ runApp app = do
       baseFileLogger <- useBaseLogger (logWithRendering (renderUsing (toLogStr . pShowNoColor)) . simpleLogger True)
         <$> createFileLogger "proxy.log"
       let logger = baseStdLogger <> baseFileLogger :: LoggerWithCleanup IO LogB
-      runEffT00 $ withLogger logger $ do
+      runEffT00 $ withLoggerCleanup logger $ do
         state <- initializeState settings
         runRModule settings $ runRModule state app
 
@@ -199,3 +199,11 @@ botInstanceToModule bot@(BotInstance runFlag identityFlags commandFlags mode pro
           }
     return botModules
 ```
+
+### `TraceId` Support
+
+In complex applications, it is often useful to trace the flow of a request or operation across multiple log entries. Use `withTraceId` to attach a `TraceId` to a block of codes, all logger inside that block will automatically include the `TraceId` in their log categories.
+
+We also included some optional trace id generation utilities.
+
+See `Module.Logging.TraceId` for relevant functions and types.

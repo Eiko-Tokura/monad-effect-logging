@@ -5,7 +5,58 @@
 --
 -- finally we will also provide an interface for MonadLogger for compatibility
 module Module.Logging
-  ( module Module.Logging
+  ( -- * Definitions
+    LogSeverity
+  , IsLogCat(..)
+  , LogCat(..)
+  , Log(..), logType, logContent
+  , LogMsg(..), logLoc, logSource, logMsg
+  , Logger(..), runLogger
+  , Logging
+  , LoggingModule
+  -- * Default log categories
+  , Debug(..)
+  , Info(..)
+  , Warn(..)
+  , Error(..)
+  , Other(..)
+  -- * Default log implementation
+  , toLogStrS
+  , logLog
+  , LogS
+  , LogData
+  -- * Combinators
+  , localLogger
+  , localLog
+  , addLogCat
+  , effAddLogCat
+  , effAddLogCat'
+  , filterLogCats
+  , anyLogCat
+  , excludeLogCat
+  , severityThat
+  , noSeverity
+  , isLogCat
+  , isLogSubType
+  , isLogCatName
+  , someSeverity
+  , someLogCatName
+  -- * Running and initializing
+  , runLogging
+  , withLiftLogger
+  -- * Other optional utilities
+  , defaultStringToLogSeverity
+  , defaultLoggingFromEnv
+  , defaultLoggingFromArgs
+  , monadLoggerAdapter
+  , mlLogLevelToLogCat
+
+  -- * Re-export
+  , ModuleRead(..)
+  , ModuleState(..)
+  , ModuleInitData(..)
+  , ModuleEvent(..)
+  -- * Re-export contravariant functors
   , module Data.Functor.Contravariant
   ) where
 
@@ -289,7 +340,7 @@ runLogging logger = runEffTOuter_ (LoggingRead logger) LoggingState
 {-# INLINE runLogging #-}
 
 instance SystemModule (Logging m a) where
-  data    ModuleInitData (Logging m a) = LoggerInitData
+  data    ModuleInitData (Logging m a) = LoggingInitData
     { loggerInitLogger   :: Logger IO a
     , loggerInitSeverity :: Maybe LogSeverity
     , loggerInitCleanup  :: Maybe (IO ())
@@ -297,10 +348,10 @@ instance SystemModule (Logging m a) where
   data    ModuleEvent    (Logging m a) = LoggingEvent
 
 instance Loadable c (Logging IO a) mods ies where
-  withModule (LoggerInitData logger mSev Nothing) act = case mSev of
+  withModule (LoggingInitData logger mSev Nothing) act = case mSev of
     Nothing -> runEffTOuter_ (LoggingRead logger) LoggingState act
     Just s -> runEffTOuter_ (LoggingRead $ anyLogCat (severityThat $ Predicate (>= s)) logger) LoggingState act
-  withModule (LoggerInitData logger mSev (Just clean)) act = bracketEffT (return ()) (\_ -> liftIO clean) (\_ -> case mSev of
+  withModule (LoggingInitData logger mSev (Just clean)) act = bracketEffT (return ()) (\_ -> liftIO clean) (\_ -> case mSev of
       Nothing -> runEffTOuter_ (LoggingRead logger) LoggingState act
       Just s -> runEffTOuter_ (LoggingRead $ anyLogCat (severityThat $ Predicate (>= s)) logger) LoggingState act
     )
@@ -324,13 +375,13 @@ defaultStringToLogSeverity = \case
 defaultLoggingFromEnv :: Logger IO LogS -> Maybe (IO ()) -> IO (ModuleInitData LoggingModule)
 defaultLoggingFromEnv logger mcl = do
   mLogLevel <- liftIO $ (readMaybe =<<) <$> lookupEnv "LOG_LEVEL"
-  return $ LoggerInitData logger mLogLevel mcl
+  return $ LoggingInitData logger mLogLevel mcl
 {-# INLINABLE defaultLoggingFromEnv #-}
 
 -- | Load an argument --log-level <level> from command line arguments,
 -- if none is provided, it will log everything (Maybe LogSeverity = Nothing)
 defaultLoggingFromArgs :: Logger IO LogS -> Maybe (IO ()) -> [String] -> Either Text (ModuleInitData LoggingModule)
-defaultLoggingFromArgs logger mcl []         = Right $ LoggerInitData logger Nothing mcl
+defaultLoggingFromArgs logger mcl []         = Right $ LoggingInitData logger Nothing mcl
 defaultLoggingFromArgs logger mcl args@(_:_) = do
   level    <- maybe (Right Nothing) (fmap Just) $ detectFlag "--log-level" defaultStringToLogSeverity args
   types    <- sequence $ detectAllFlags "--log-type"    (\case "" -> Left "Empty log type"; s -> Right s) args
@@ -338,7 +389,7 @@ defaultLoggingFromArgs logger mcl args@(_:_) = do
   let logger' = foldr ($) logger (  [ anyLogCat     (isLogCatName name) | name <- types ]
                                  <> [ excludeLogCat (isLogCatName name) | name <- nonTypes ]
                                  )
-  return $ LoggerInitData logger' level mcl
+  return $ LoggingInitData logger' level mcl
 {-# INLINABLE defaultLoggingFromArgs #-}
 
 monadLoggerAdapter :: Logger m LogS -> ML.Loc -> ML.LogSource -> ML.LogLevel -> ML.LogStr -> m ()
