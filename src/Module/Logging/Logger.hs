@@ -1,4 +1,4 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE RecordWildCards, DuplicateRecordFields #-}
 -- | Some simple combinators to build your logger
 module Module.Logging.Logger
   ( module Module.Logging.Logger
@@ -19,55 +19,47 @@ import qualified Data.ByteString.Lazy as BL
 import Data.List (foldl1')
 import Control.Exception (bracket)
 
-data BaseLogger m = BaseLogger
-  { baseLogFunc :: LogStr -> m ()
+-- | Logger with a cleanup function
+data LoggerWithCleanup m log = LoggerWithCleanup 
+  { baseLogFunc :: log -> m ()
   , cleanUpFunc :: m ()
   }
 
-data LoggerWithCleanup m logS = LoggerWithCleanup (Logger m logS) (m ())
-
-useBaseLogger :: ((LogStr -> m ()) -> Logger m logB) -> BaseLogger m -> LoggerWithCleanup m logB
-useBaseLogger makeLogger (BaseLogger logFunc cleanUp) =
-  LoggerWithCleanup (makeLogger logFunc) cleanUp
+useBaseLogger :: ((LogStr -> m ()) -> Logger m logS) -> LoggerWithCleanup m LogStr -> LoggerWithCleanup m (Log logS)
+useBaseLogger makeLogger (LoggerWithCleanup logFunc cleanUp) =
+  LoggerWithCleanup (_runLogger $ makeLogger logFunc) cleanUp
 {-# INLINE useBaseLogger #-}
 
-liftBaseLogger :: (m () -> n ()) -> BaseLogger m -> BaseLogger n
-liftBaseLogger nat (BaseLogger f c) = BaseLogger (nat . f) (nat c)
+liftBaseLogger :: (m () -> n ()) -> LoggerWithCleanup m LogStr -> LoggerWithCleanup n LogStr
+liftBaseLogger nat (LoggerWithCleanup f c) = LoggerWithCleanup (nat . f) (nat c)
 {-# INLINE liftBaseLogger #-}
 
-instance Applicative m => Semigroup (BaseLogger m) where
-  (BaseLogger f1 c1) <> (BaseLogger f2 c2) = BaseLogger (\s -> f1 s *> f2 s) (c1 *> c2)
+instance Applicative m => Semigroup (LoggerWithCleanup m log) where
+  (LoggerWithCleanup l1 c1) <> (LoggerWithCleanup l2 c2) = LoggerWithCleanup (\l -> l1 l *> l2 l) (c1 *> c2)
   {-# INLINE (<>) #-}
-instance Applicative m => Monoid (BaseLogger m) where
-  mempty = BaseLogger (const $ pure ()) (pure ())
-  {-# INLINE mempty #-}
-
-instance Applicative m => Semigroup (LoggerWithCleanup m logS) where
-  (LoggerWithCleanup l1 c1) <> (LoggerWithCleanup l2 c2) = LoggerWithCleanup (l1 <> l2) (c1 *> c2)
-  {-# INLINE (<>) #-}
-instance Applicative m => Monoid (LoggerWithCleanup m logS) where
-  mempty = LoggerWithCleanup mempty (pure ())
+instance Applicative m => Monoid (LoggerWithCleanup m log) where
+  mempty = LoggerWithCleanup (const $ pure ()) (pure ())
   {-# INLINE mempty #-}
 
 -- | It doesn't mean it is really fast, just because it is imported from fast-logger
-createFastBaseLogger :: MonadIO m => LogType -> m (BaseLogger IO)
-createFastBaseLogger logT = liftIO $ uncurry BaseLogger <$> newFastLogger logT
+createFastBaseLogger :: MonadIO m => LogType -> m (LoggerWithCleanup IO LogStr)
+createFastBaseLogger logT = liftIO $ uncurry LoggerWithCleanup <$> newFastLogger logT
 
 -- | Uses the logger from fast-logger with default buffer-size
-createStdoutBaseLogger :: MonadIO m => m (BaseLogger IO)
+createStdoutBaseLogger :: MonadIO m => m (LoggerWithCleanup IO LogStr)
 createStdoutBaseLogger = createFastBaseLogger (LogStdout defaultBufSize)
 
 -- | A very simple logger that just prints to stdout **without buffering**.
 -- suitable for simple and fast-reaction applications
-createSimpleStdoutBaseLogger :: MonadIO m => m (BaseLogger IO)
+createSimpleStdoutBaseLogger :: MonadIO m => m (LoggerWithCleanup IO LogStr)
 createSimpleStdoutBaseLogger = liftIO $ do
   let logFunc (LogStr _ builder) = BL.putStr (BB.toLazyByteString builder)
-  return $ BaseLogger logFunc (return ())
+  return $ LoggerWithCleanup logFunc (return ())
 {-# INLINE createSimpleStdoutBaseLogger #-}
 
 -- | A very simple concurrent logger that just prints to stdout **without buffering**.
 -- A cleanUp function is provided to make sure all logs are printed before exiting.
-createSimpleConcurrentStdoutBaseLogger :: MonadIO m => m (BaseLogger IO)
+createSimpleConcurrentStdoutBaseLogger :: MonadIO m => m (LoggerWithCleanup IO LogStr)
 createSimpleConcurrentStdoutBaseLogger = liftIO $ do
   queue <- newTQueueIO
   counter <- newTVarIO (0 :: Int)
@@ -95,14 +87,14 @@ createSimpleConcurrentStdoutBaseLogger = liftIO $ do
               return (Just b)
         forM_ remQ (mapM_ rawLogFunc)
   _ <- forkIO $ forever $ atomicLogFunc queue
-  return $ BaseLogger logFunc cleanUpFunc
+  return $ LoggerWithCleanup logFunc cleanUpFunc
 
 -- | Uses the logger from fast-logger with default buffer-size
-createStderrBaseLogger :: MonadIO m => m (BaseLogger IO)
+createStderrBaseLogger :: MonadIO m => m (LoggerWithCleanup IO LogStr)
 createStderrBaseLogger = createFastBaseLogger (LogStderr defaultBufSize)
 
 -- | Uses the logger from fast-logger with default buffer-size
-createFileLogger :: MonadIO m => FilePath -> m (BaseLogger IO)
+createFileLogger :: MonadIO m => FilePath -> m (LoggerWithCleanup IO LogStr)
 createFileLogger fp = createFastBaseLogger (LogFile (FileLogSpec fp (512 * 1024 * 1024) 3) defaultBufSize)
 
 type Timed = Bool
@@ -162,41 +154,41 @@ logSimple LogMsg {..}
 {-# INLINE logSimple #-}
 
 -- | Bracket pattern, runs the action with the provided logger and cleans up afterwards
-withLogger
-  :: (ConsFDataList c (Logging m log : mods), Monad m, MonadMask m)
-  => LoggerWithCleanup m log -- ^ specify a logger with cleanup function
-  -> EffT' c (Logging m log : mods) es m a
+withLoggerCleanup
+  :: (ConsFDataList c (Logging m logS : mods), Monad m, MonadMask m)
+  => LoggerWithCleanup m (Log logS) -- ^ specify a logger with cleanup function
+  -> EffT' c (Logging m logS : mods) es m a
   -> EffT' c mods es m a
-withLogger (LoggerWithCleanup logger cleanUp) action = bracketEffT
+withLoggerCleanup (LoggerWithCleanup logger cleanUp) action = bracketEffT
   (return ())
   (\_ -> lift cleanUp)
-  (\_ -> runLogging logger action)
-{-# INLINE withLogger #-}
+  (\_ -> runLogging (Logger logger) action)
+{-# INLINE withLoggerCleanup #-}
 
 -- $ Bracket pattern
 -- | This function is used to create a logger in a scoped manner.
 -- It takes care of creating and cleaning up the base logger.
 --
--- Hint: use Ap and <> to combine multiple base loggers in IO (BaseLogger IO)
+-- Hint: use Ap and <> to combine multiple base loggers in IO (LoggerWithCleanup IO LogStr)
 withBaseLogger
   :: (ConsFDataList c (Logging m (LogMsg logS) : mods), Monad m, MonadMask m)
-  => m (BaseLogger m)                       -- ^ specify a base logger
+  => m (LoggerWithCleanup m LogStr)               -- ^ specify a base logger
   -> ((LogStr -> m ()) -> Logger m (LogMsg logS)) -- ^ specify how to format the log data using the base logger
   -> EffT' c (Logging m (LogMsg logS) : mods) es m a
   -> EffT' c mods es m a
 withBaseLogger createBaseLogger makeLogger action = bracketEffT
   (lift createBaseLogger)
-  (\BaseLogger {cleanUpFunc} -> lift cleanUpFunc)
-  (\BaseLogger {baseLogFunc} -> runLogging (makeLogger baseLogFunc) action)
+  (\LoggerWithCleanup {cleanUpFunc} -> lift cleanUpFunc)
+  (\LoggerWithCleanup {baseLogFunc} -> runLogging (makeLogger baseLogFunc) action)
 {-# INLINE withBaseLogger #-}
 
 withBaseLoggerIO
-  :: IO (BaseLogger IO)                    -- ^ specify a base logger
+  :: IO (LoggerWithCleanup IO LogStr)                    -- ^ specify a base logger
   -> ((LogStr -> IO ()) -> Logger IO logS) -- ^ specify how to log logS using the base logger
   -> (Logger IO logS -> IO a)  -- ^ action to run with the logger
   -> IO a
 withBaseLoggerIO createBaseLogger makeLogger action = bracket
   (liftIO createBaseLogger)
-  (\BaseLogger {cleanUpFunc} -> liftIO cleanUpFunc)
-  (\BaseLogger {baseLogFunc} -> action (makeLogger baseLogFunc))
+  (\LoggerWithCleanup {cleanUpFunc} -> liftIO cleanUpFunc)
+  (\LoggerWithCleanup {baseLogFunc} -> action (makeLogger baseLogFunc))
 {-# INLINE withBaseLoggerIO #-}

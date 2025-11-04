@@ -1,6 +1,24 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Module.Logging.LogS
-  ( module Module.Logging.LogS
+  (
+  -- * Log value builders and renderers
+    toLog
+  , logShow
+  -- * Logging module types
+  , LogS
+  , LoggingModule
+  -- * General logging utilities
+  , log_
+  , logLoc_
+  , logs
+  , logTH
+  , logS
+  -- * MonadIO specific versions
+  , logLocIO
+  , logIO
+  , logsIO
+  , logTHIO
+  -- * Re-export
   , ML.LogStr
   ) where
 
@@ -19,9 +37,9 @@ logShow :: Show a => a -> ML.LogStr
 logShow = ML.toLogStr . show
 {-# INLINE logShow #-}
 
-logData :: (Monad m, In' c (Logging m LogS) mods) => LogS -> EffT' c mods es m ()
-logData logd = logLog (Log [] logd)
-{-# INLINE logData #-}
+logS :: (Monad m, In' c (Logging m LogS) mods) => LogS -> EffT' c mods es m ()
+logS logd = logLog (Log [] logd)
+{-# INLINE logS #-}
 
 logLoc_ :: (Monad m, In' c (Logging m LogS) mods, IsLogCat subType) => ML.Loc -> subType -> ML.LogStr -> EffT' c mods es m ()
 logLoc_ src subTypeType msg = logLog (Log [LogCat subTypeType] (mempty @LogS & logMsg .~ msg & logLoc ?~ src))
@@ -41,6 +59,20 @@ logs logTypes msg = logLog (Log logTypes (mempty @LogS & logMsg .~ msg))
 logTH :: (IsLogCat subType, TH.Lift subType) => subType -> TH.Q TH.Exp
 logTH subType = [| logLoc_ $(TH.qLocation >>= TH.lift) $(TH.lift subType) |]
 
+---------- Monad IO specific versions ----------
+
+logLocIO :: (MonadIO m, In' c (Logging IO LogS) mods, IsLogCat subType) => ML.Loc -> subType -> ML.LogStr -> EffT' c mods es m ()
+logLocIO src subTypeType = baseTransform liftIO . logLoc_ src subTypeType
+{-# INLINE logLocIO #-}
+
+logIO :: (MonadIO m, In' c (Logging IO LogS) mods, IsLogCat subType) => subType -> ML.LogStr -> EffT' c mods es m ()
+logIO subTypeType = baseTransform liftIO . log_ subTypeType
+{-# INLINE logIO #-}
+
+logsIO :: (MonadIO m, In' c (Logging IO LogS) mods) => [LogCat] -> ML.LogStr -> EffT' c mods es m ()
+logsIO logTypes = baseTransform liftIO . logs logTypes
+{-# INLINE logsIO #-}
+
 -- | Template Haskell helper with location info, with m=IO
 logTHIO :: (IsLogCat subType, TH.Lift subType) => subType -> TH.Q TH.Exp
-logTHIO subType = [| logLoc_ @IO $(TH.qLocation >>= TH.lift) $(TH.lift subType) |]
+logTHIO subType = [| baseTransform liftIO . logLoc_ @IO $(TH.qLocation >>= TH.lift) $(TH.lift subType) |]

@@ -2,19 +2,26 @@
 --   Description : Log value builders and renderers. This module provides a way to build log messages separately from rendering them, allowing for flexible logging rendering strategies (e.g. with console colors, JSON formatting, etc.).
 {-# LANGUAGE TemplateHaskell #-}
 module Module.Logging.LogB
-  ( LogVals
+  ( -- * Log value builders and renderers
+    LogVals
   , LogBuilder
   , LogRenderer
   , toLog
   , logShow
   , renderUsing
 
+  -- * Logging module types
   , LogB
   , LoggingModuleB
+  -- * General logging utilities
   , log_
   , logLoc_
   , logs
   , logTH
+  -- * MonadIO specific versions
+  , logLocIO
+  , logIO
+  , logsIO
   , logTHIO
   ) where
 
@@ -87,6 +94,21 @@ logs logTypes msg = logLog (Log logTypes (mempty @LogB & logMsg .~ msg))
 logTH :: (IsLogCat subType, TH.Lift subType) => subType -> TH.Q TH.Exp
 logTH subType = [| logLoc_ $(TH.qLocation >>= TH.lift) $(TH.lift subType) |]
 
+---------- Monad IO specific versions ----------
+
+ -- | Useful when you are in a MonadIO but with a Logging IO _ type module
+logLocIO :: (MonadIO m, In' c (Logging IO LogB) mods, IsLogCat subType) => ML.Loc -> subType -> LogBuilder -> EffT' c mods es m ()
+logLocIO src subTypeType = baseTransform liftIO . logLoc_ src subTypeType
+{-# INLINE logLocIO #-}
+
+logIO :: (MonadIO m, In' c (Logging IO LogB) mods, IsLogCat subType) => subType -> LogBuilder -> EffT' c mods es m ()
+logIO subTypeType = baseTransform liftIO . log_ subTypeType
+{-# INLINE logIO #-}
+
+logsIO :: (MonadIO m, In' c (Logging IO LogB) mods) => [LogCat] -> LogBuilder -> EffT' c mods es m ()
+logsIO logTypes = baseTransform liftIO . logs logTypes
+{-# INLINE logsIO #-}
+
 -- | Template Haskell helper with location info, with m=IO
 logTHIO :: (IsLogCat subType, TH.Lift subType) => subType -> TH.Q TH.Exp
-logTHIO subType = [| logLoc_ @IO $(TH.qLocation >>= TH.lift) $(TH.lift subType) |]
+logTHIO subType = [| baseTransform liftIO . logLoc_ $(TH.qLocation >>= TH.lift) $(TH.lift subType) |]

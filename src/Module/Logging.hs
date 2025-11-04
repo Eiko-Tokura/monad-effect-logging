@@ -277,7 +277,7 @@ withLiftLogger lifter act = do
 
 instance Module (Logging m (a :: Type)) where
   newtype ModuleRead  (Logging m a) = LoggingRead
-    { logging        :: Logger m a
+    { logging :: Logger m a
     }
   data    ModuleState (Logging m a) = LoggingState
 

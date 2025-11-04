@@ -9,6 +9,12 @@ import qualified Control.Monad.Logger as ML
 
 data Logging m a
 
+instance Module (Logging m (a :: Type)) where
+  newtype ModuleRead  (Logging m a) = LoggingRead
+    { logging :: Logger m a
+    }
+  data    ModuleState (Logging m a) = LoggingState
+
 data Log a = Log
   { _logType    :: [LogCat]
   , _logContent :: a
