@@ -2,7 +2,19 @@
 
 `monad-effect-logging` is a flexible logging system utilizing the `monad-effect` effect system for Haskell, it gives you very fine control over the logging behavior.
 
-## Definition
+Main features include:
+
+* (Optional) Separation of log generation and rendering
+
+* Pure logging
+
+* Extensible log categories
+
+* Compatible with `monad-logger`
+
+* `TraceId` support
+
+## Type Definition
 
 ```haskell
 import qualified Control.Monad.Logger as ML
@@ -164,8 +176,14 @@ The `Lift` class is only necessary if you want to use them inside `logTH` templa
 To use them, using functions in `Module.Logging.LogS` or `Module.Logging.LogB`, under corresponding logging context:
 
 ```haskell
-do
+import Module.Logging
+import Module.Logging.LogS
+
+example :: (In (Logging m LogS) mods, Monad m) => EffT mods es m ()
+example = do
+  sendBytesToClient 1024
   $(logTH Bytes) "Sent 1024 bytes to client"
+  processUserLogin
   $(logTH Logic) "User logged in successfully"
 ```
 
