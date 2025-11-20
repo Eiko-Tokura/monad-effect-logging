@@ -41,6 +41,7 @@ module Module.Logging
   , isLogCatName
   , someSeverity
   , someLogCatName
+  , liftLogger
   -- * Running and initializing
   , runLogging
   , withLiftLogger
