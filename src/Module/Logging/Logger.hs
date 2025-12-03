@@ -83,7 +83,8 @@ createSimpleConcurrentStdoutBaseLogger = liftIO $ do
           modifyTVar' counter (subtract 1)
           return logStr
         rawLogFunc logStr
-  let cleanUpFunc = do
+  let cleanUpFunc tid = do
+        killThread tid
         remQ <- atomically $ do
           r <- readTVar counter
           if r == 0
@@ -93,8 +94,8 @@ createSimpleConcurrentStdoutBaseLogger = liftIO $ do
               writeTVar counter 0
               return (Just b)
         forM_ remQ (mapM_ rawLogFunc)
-  _ <- forkIO $ forever $ atomicLogFunc queue
-  return $ LoggerWithCleanup logFunc cleanUpFunc
+  tid <- forkIO $ forever $ atomicLogFunc queue
+  return $ LoggerWithCleanup logFunc (cleanUpFunc tid)
 
 -- | Uses the logger from fast-logger with default buffer-size
 createStderrBaseLogger :: MonadIO m => m (LoggerWithCleanup IO LogStr)
