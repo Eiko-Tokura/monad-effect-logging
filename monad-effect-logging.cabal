@@ -94,3 +94,4 @@ library
                       , LambdaCase
                       , TypeFamilies
                       , TypeApplications
+                      , TypeAbstractions
