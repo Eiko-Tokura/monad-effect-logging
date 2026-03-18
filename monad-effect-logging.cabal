@@ -9,7 +9,7 @@ name:               monad-effect-logging
 -- PVP summary:     +-+------- breaking API changes
 --                  | | +----- non-breaking API additions
 --                  | | | +--- code changes with no API change
-version:            0.2.0.0
+version:            0.3.0.0
 
 -- A short (one-line) description of the package.
 synopsis: A flexible logging system utilizing the `monad-effect` effect system.
@@ -54,8 +54,6 @@ library
 
     -- Modules exported by the library.
     exposed-modules: Module.Logging
-                   , Module.Logging.LogS
-                   , Module.Logging.LogB
                    , Module.Logging.Logger
                    , Module.Logging.TraceId
     ghc-options: -fexpose-all-unfoldings
