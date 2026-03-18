@@ -79,6 +79,7 @@ library
                  , template-haskell >= 2.20 && < 2.24
                  , primitive < 0.10
                  , clock < 0.9
+                 , optparse-applicative < 0.20
 
     -- Directories containing source files.
     hs-source-dirs:   src

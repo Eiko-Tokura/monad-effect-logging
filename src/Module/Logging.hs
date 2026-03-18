@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell, UndecidableInstances, AllowAmbiguousTypes, DeriveLift, OverloadedRecordDot #-}
+{-# LANGUAGE TemplateHaskell, UndecidableInstances, ApplicativeDo, AllowAmbiguousTypes, DeriveLift, OverloadedRecordDot #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 -- | We want a logger that supports open categories, open levels, open severities etc.
 -- so that we can filter on different levels for different categories
@@ -46,6 +46,7 @@ module Module.Logging
   , runLogging
   , withLiftLogger
   -- * Other optional utilities
+  , defaultLoggingOptParser
   , defaultStringToLogSeverity
   , defaultLoggingFromEnv
   , defaultLoggingFromArgs
@@ -73,6 +74,7 @@ import Data.Kind
 import Data.Maybe
 import Data.Text (Text)
 import Data.Typeable
+import qualified Options.Applicative  as O
 import qualified Control.Monad.Logger as ML
 
 import System.Environment
@@ -392,6 +394,33 @@ defaultLoggingFromArgs logger mcl args@(_:_) = do
                                  )
   return $ LoggingInitData logger' level mcl
 {-# INLINABLE defaultLoggingFromArgs #-}
+
+defaultLoggingOptParser :: Logger IO LogS -> Maybe (IO ()) -> O.Parser (ModuleInitData LoggingModule)
+defaultLoggingOptParser logger mcl = do
+  level :: Maybe LogSeverity
+    <- optional $ O.option O.auto
+      (  O.long "log-level"
+      <> O.metavar "LEVEL"
+      <> O.help "Log level, one of 'Debug', 'Info', 'Warn', 'Error', or a number between 0 and 10 with a precision of 1 decimal place"
+      )
+  types :: [String]
+    <- many $ O.option O.str
+      (  O.long "log-type"
+      <> O.metavar "TYPE"
+      <> O.help "Log type, can be specified multiple times"
+      )
+  nonTypes :: [String]
+    <- many $ O.option O.str
+      (  O.long "no-log-type"
+      <> O.metavar "TYPE"
+      <> O.help "Log type to exclude, can be specified multiple times"
+      )
+  return $ LoggingInitData
+    (foldr ($) logger (  [ anyLogCat     (isLogCatName name) | name <- types ]
+                                       <> [ excludeLogCat (isLogCatName name) | name <- nonTypes ]
+                      )
+    ) level mcl
+
 
 monadLoggerAdapter :: Logger m LogS -> ML.Loc -> ML.LogSource -> ML.LogLevel -> ML.LogStr -> m ()
 monadLoggerAdapter logger loc src lev msg = _runLogger logger Log
