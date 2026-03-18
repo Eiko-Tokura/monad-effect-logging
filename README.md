@@ -10,11 +10,9 @@ The current API is centered on one unified message payload:
 - `Logger` for the sink
 - `LogEffect` for the installed effect
 
-## Why this version
+## Highlights
 
-Older versions exposed two payload styles, `LogS` and `LogB`. This version removes that split.
-
-You now build one `LogDoc` value and decide at the boundary how to render it:
+You build one `LogDoc` value and decide at the boundary how to render it:
 
 - plain text
 - ANSI colored text
@@ -113,7 +111,7 @@ For custom pipelines, use the lower-level building blocks:
 
 ## Categories
 
-Categories are still open and extensible:
+Categories are open and extensible:
 
 ```haskell
 data ProxyLog = Bytes | Logic deriving (Lift)
@@ -131,12 +129,12 @@ You can add local categories with `effAddLogCat`, and filter them with the exist
 
 `MonadLogger` and `MonadLoggerIO` are implemented for `LogEffect m LogDoc`.
 
-Incoming `monad-logger` messages are wrapped as `logRaw`, so compatibility does not require a second payload type anymore.
+Incoming `monad-logger` messages are wrapped as `logRaw`, so compatibility fits directly into the unified payload model.
 
 ## `TraceId`
 
-`TraceId` is still a category-level concern. Use `withTraceId` or one of the provided generators from `Module.Logging.TraceId`.
+`TraceId` is a category-level concern. Use `withTraceId` or one of the provided generators from `Module.Logging.TraceId`.
 
 ## Status
 
-This is a breaking API redesign. Existing code written against `LogS` / `LogB` will need to move to `LogDoc`.
+This release presents the library around `LogDoc`, options-based logger construction, open categories, and boundary-driven rendering.
