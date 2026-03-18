@@ -501,11 +501,11 @@ emitLogEvent entry = do
   lift $ action entry
 
 logLoc_
-  :: forall a c mods es m cat.
-     (Monad m, In' c (LogEffect m a) mods, IsLogCat cat)
+  :: forall c mods es m cat.
+     (Monad m, In' c (LogEffect m LogDoc) mods, IsLogCat cat)
   => ML.Loc
   -> cat
-  -> a
+  -> LogDoc
   -> EffT' c mods es m ()
 logLoc_ loc cat doc =
   emitLogEvent $
@@ -520,10 +520,10 @@ logLoc_ loc cat doc =
       }
 
 log_
-  :: forall a c mods es m cat.
-     (Monad m, In' c (LogEffect m a) mods, IsLogCat cat)
+  :: forall c mods es m cat.
+     (Monad m, In' c (LogEffect m LogDoc) mods, IsLogCat cat)
   => cat
-  -> a
+  -> LogDoc
   -> EffT' c mods es m ()
 log_ cat doc =
   emitLogEvent $
@@ -538,10 +538,10 @@ log_ cat doc =
       }
 
 logs
-  :: forall a c mods es m.
-     (Monad m, In' c (LogEffect m a) mods)
+  :: forall c mods es m.
+     (Monad m, In' c (LogEffect m LogDoc) mods)
   => [LogCat]
-  -> a
+  -> LogDoc
   -> EffT' c mods es m ()
 logs cats doc =
   emitLogEvent $
@@ -559,29 +559,29 @@ logTH :: (IsLogCat cat, TH.Lift cat) => cat -> TH.Q TH.Exp
 logTH cat = [| logLoc_ $(TH.qLocation >>= TH.lift) $(TH.lift cat) |]
 
 logLocIO
-  :: forall a c mods es m cat.
-     (MonadIO m, In' c (LogEffect IO a) mods, IsLogCat cat)
+  :: forall c mods es m cat.
+     (MonadIO m, In' c (LogEffect IO LogDoc) mods, IsLogCat cat)
   => ML.Loc
   -> cat
-  -> a
+  -> LogDoc
   -> EffT' c mods es m ()
-logLocIO loc cat = baseTransform liftIO . logLoc_ @a loc cat
+logLocIO loc cat = baseTransform liftIO . logLoc_ loc cat
 
 logIO
-  :: forall a c mods es m cat.
-     (MonadIO m, In' c (LogEffect IO a) mods, IsLogCat cat)
+  :: forall c mods es m cat.
+     (MonadIO m, In' c (LogEffect IO LogDoc) mods, IsLogCat cat)
   => cat
-  -> a
+  -> LogDoc
   -> EffT' c mods es m ()
-logIO cat = baseTransform liftIO . log_ @a cat
+logIO cat = baseTransform liftIO . log_ cat
 
 logsIO
-  :: forall a c mods es m.
-     (MonadIO m, In' c (LogEffect IO a) mods)
+  :: forall c mods es m.
+     (MonadIO m, In' c (LogEffect IO LogDoc) mods)
   => [LogCat]
-  -> a
+  -> LogDoc
   -> EffT' c mods es m ()
-logsIO cats = baseTransform liftIO . logs @a cats
+logsIO cats = baseTransform liftIO . logs cats
 
 logTHIO :: (IsLogCat cat, TH.Lift cat) => cat -> TH.Q TH.Exp
 logTHIO cat = [| baseTransform liftIO . logLoc_ @LogDoc $(TH.qLocation >>= TH.lift) $(TH.lift cat) |]
