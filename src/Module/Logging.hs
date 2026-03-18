@@ -54,6 +54,7 @@ module Module.Logging
   , localLogEvent
   , addLogCat
   , effAddLogCat
+  , effAddLogCat'
   , filterLogCats
   , anyLogCat
   , excludeLogCat
@@ -389,6 +390,14 @@ effAddLogCat
   -> EffT' c mods es m b
   -> EffT' c mods es m b
 effAddLogCat cat = localLogger @a (addLogCat cat)
+
+effAddLogCat'
+  :: forall c mods es m b.
+     (Monad m, In' c (LogEffect m LogDoc) mods)
+  => LogCat
+  -> EffT' c mods es m b
+  -> EffT' c mods es m b
+effAddLogCat' = effAddLogCat @LogDoc
 
 filterLogCats :: Applicative m => Predicate [LogCat] -> Logger m a -> Logger m a
 filterLogCats p (Logger logger) =
