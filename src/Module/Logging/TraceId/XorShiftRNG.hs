@@ -39,7 +39,7 @@ mix64 !z0 =
   in  z2 `xor` (z2 `shiftR` 31)
 {-# INLINE mix64 #-}
 
--- ----------------------------------------------------------------------------- 
+-- -----------------------------------------------------------------------------
 -- | Turn one seed into @n@ independent seeds suitable for different threads.
 --
 --   *   Deterministic: same parent → same list.

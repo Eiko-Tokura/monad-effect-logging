@@ -49,22 +49,22 @@ data LoggerWithCleanup m a = LoggerWithCleanup
 
 data LoggerOptions = LoggerOptions
   { loggerDocRenderOptions :: DocRenderOptions
-  , loggerIncludeTime :: Bool
-  , loggerIncludeCats :: Bool
-  , loggerIncludeLoc :: Bool
-  , loggerIncludeSource :: Bool
-  , loggerAppendNewline :: Bool
+  , loggerIncludeTime      :: Bool
+  , loggerIncludeCats      :: Bool
+  , loggerIncludeLoc       :: Bool
+  , loggerIncludeSource    :: Bool
+  , loggerAppendNewline    :: Bool
   }
 
 defaultLoggerStyle :: LoggerOptions
 defaultLoggerStyle =
   LoggerOptions
     { loggerDocRenderOptions = defaultDocRenderOptions
-    , loggerIncludeTime = True
-    , loggerIncludeCats = True
-    , loggerIncludeLoc = True
-    , loggerIncludeSource = True
-    , loggerAppendNewline = True
+    , loggerIncludeTime      = True
+    , loggerIncludeCats      = True
+    , loggerIncludeLoc       = True
+    , loggerIncludeSource    = True
+    , loggerAppendNewline    = True
     }
 
 liftBaseLogger :: (m () -> n ()) -> LoggerWithCleanup m a -> LoggerWithCleanup n a
@@ -229,4 +229,4 @@ withBaseLoggerIO createBaseLogger opts action =
   bracket
     createBaseLogger
     cleanUpFunc
-    (\baseLogger -> action $ loggerFromRenderer opts (baseLogger.baseLogFunc))
+    (\baseLogger -> action $ loggerFromRenderer opts baseLogger.baseLogFunc)

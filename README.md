@@ -12,14 +12,18 @@ The current API is centered on one unified message payload:
 
 ## Highlights
 
-You build one `LogDoc` value and decide at the boundary how to render it:
+* You build one `LogDoc` value and decide at the boundary how to render it:
 
-- plain text
-- ANSI colored text
-- different `Show` strategies
-- custom logger pipelines
+  - plain text
+  - ANSI colored text
+  - different `Show` strategies
+  - custom logger pipelines
+  
+* Color stays semantic until rendering time. A file logger can ignore color while a console logger can emit ANSI codes from the exact same log event.
 
-Color stays semantic until rendering time. A file logger can ignore color while a console logger can emit ANSI codes from the exact same log event.
+* Excellent `TraceId` support
+
+* Open log categories, extensible
 
 ## Core types
 

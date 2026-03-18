@@ -134,15 +134,15 @@ someLogCatName :: LogCat -> ML.LogStr
 someLogCatName (LogCat @cat x) = logTypeDisplay @cat x
 
 data LogEvent a = LogEvent
-  { _logEventCats :: [LogCat]
+  { _logEventCats    :: [LogCat]
   , _logEventPayload :: a
   }
   deriving (Functor)
 
 data LogWithSourceMeta a = LogWithSourceMeta
-  { _logMetaLoc :: Maybe ML.Loc
+  { _logMetaLoc    :: Maybe ML.Loc
   , _logMetaSource :: Maybe ML.LogSource
-  , _logMetaDoc :: a
+  , _logMetaDoc    :: a
   }
   deriving (Functor)
 
@@ -162,13 +162,13 @@ data NamedColor
 
 data Color
   = DefaultColor
-  | Named NamedColor
-  | RGB Word8 Word8 Word8
+  | Named !NamedColor
+  | RGB   !Word8 !Word8 !Word8
   deriving (Eq, Show)
 
 data Style = Style
-  { styleFg :: Maybe Color
-  , styleBg :: Maybe Color
+  { styleFg   :: Maybe Color
+  , styleBg   :: Maybe Color
   , styleBold :: Bool
   }
   deriving (Eq, Show)
@@ -176,17 +176,17 @@ data Style = Style
 defaultStyle :: Style
 defaultStyle =
   Style
-    { styleFg = Nothing
-    , styleBg = Nothing
+    { styleFg   = Nothing
+    , styleBg   = Nothing
     , styleBold = False
     }
 
 data LogDoc
   = DocEmpty
-  | DocRaw ML.LogStr
-  | DocShown SomeShown
-  | DocStyled Style LogDoc
-  | DocAppend LogDoc LogDoc
+  | DocRaw    !ML.LogStr
+  | DocShown  !SomeShown
+  | DocStyled !Style !LogDoc
+  | DocAppend !LogDoc LogDoc
 
 data StyleMode
   = NoStyles
@@ -194,14 +194,14 @@ data StyleMode
   deriving (Eq, Show)
 
 data DocRenderOptions = DocRenderOptions
-  { docRenderShow :: forall a. Show a => a -> ML.LogStr
+  { docRenderShow      :: forall a. Show a => a -> ML.LogStr
   , docRenderStyleMode :: StyleMode
   }
 
 defaultDocRenderOptions :: DocRenderOptions
 defaultDocRenderOptions =
   DocRenderOptions
-    { docRenderShow = ML.toLogStr . show
+    { docRenderShow      = ML.toLogStr . show
     , docRenderStyleMode = NoStyles
     }
 
@@ -227,9 +227,9 @@ instance Monad LogEvent where
 instance Semigroup a => Semigroup (LogWithSourceMeta a) where
   metaA <> metaB =
     LogWithSourceMeta
-      { _logMetaLoc = _logMetaLoc metaA <|> _logMetaLoc metaB
+      { _logMetaLoc    = _logMetaLoc    metaA <|> _logMetaLoc    metaB
       , _logMetaSource = _logMetaSource metaA <|> _logMetaSource metaB
-      , _logMetaDoc = _logMetaDoc metaA <> _logMetaDoc metaB
+      , _logMetaDoc    = _logMetaDoc    metaA <>  _logMetaDoc    metaB
       }
 
 instance Monoid a => Monoid (LogWithSourceMeta a) where
@@ -244,10 +244,10 @@ instance Semigroup LogDoc where
 instance Monoid LogDoc where
   mempty = DocEmpty
 
-data Debug = Debug deriving TH.Lift
-data Info = Info deriving TH.Lift
-data Warn = Warn deriving TH.Lift
-data Error = Error deriving TH.Lift
+data Debug    = Debug      deriving TH.Lift
+data Info     = Info       deriving TH.Lift
+data Warn     = Warn       deriving TH.Lift
+data Error    = Error      deriving TH.Lift
 newtype Other = Other Text deriving TH.Lift
 
 instance IsLogCat Debug where
@@ -310,26 +310,26 @@ renderLogDoc opts = case docRenderStyleMode opts of
   NoStyles -> goPlain
   AnsiStyles -> goAnsi defaultStyle
   where
-    goPlain DocEmpty = mempty
-    goPlain (DocRaw str) = str
+    goPlain DocEmpty                 = mempty
+    goPlain (DocRaw str)             = str
     goPlain (DocShown (SomeShown x)) = docRenderShow opts x
-    goPlain (DocStyled _ doc) = goPlain doc
-    goPlain (DocAppend a b) = goPlain a <> goPlain b
+    goPlain (DocStyled _ doc)        = goPlain doc
+    goPlain (DocAppend a b)          = goPlain a <> goPlain b
 
-    goAnsi current DocEmpty = mempty
-    goAnsi current (DocRaw str) = str
-    goAnsi current (DocShown (SomeShown x)) = docRenderShow opts x
-    goAnsi current (DocAppend a b) = goAnsi current a <> goAnsi current b
-    goAnsi current (DocStyled style doc) =
+    goAnsi _       DocEmpty                 = mempty
+    goAnsi _       (DocRaw str)             = str
+    goAnsi _       (DocShown (SomeShown x)) = docRenderShow opts x
+    goAnsi current (DocAppend a b)          = goAnsi current a <> goAnsi current b
+    goAnsi current (DocStyled style doc)    =
       let merged = mergeStyle current style
        in ansiForStyle merged <> goAnsi merged doc <> ansiForStyle current
 
 mergeStyle :: Style -> Style -> Style
 mergeStyle outer inner =
   Style
-    { styleFg = styleFg inner <|> styleFg outer
-    , styleBg = styleBg inner <|> styleBg outer
-    , styleBold = styleBold outer || styleBold inner
+    { styleFg   = styleFg   inner <|> styleFg   outer
+    , styleBg   = styleBg   inner <|> styleBg   outer
+    , styleBold = styleBold outer ||  styleBold inner
     }
 
 ansiForStyle :: Style -> ML.LogStr
@@ -346,25 +346,25 @@ ansiForStyle style =
        in if null baseCodes then ["0"] else baseCodes
 
 colorToFgCodes :: Color -> [String]
-colorToFgCodes DefaultColor = ["39"]
+colorToFgCodes DefaultColor  = ["39"]
 colorToFgCodes (Named color) = [show $ namedColorCode color]
-colorToFgCodes (RGB r g b) = ["38", "2", show r, show g, show b]
+colorToFgCodes (RGB r g b)   = ["38", "2", show r, show g, show b]
 
 colorToBgCodes :: Color -> [String]
-colorToBgCodes DefaultColor = ["49"]
+colorToBgCodes DefaultColor  = ["49"]
 colorToBgCodes (Named color) = [show $ namedColorCode color + 10]
-colorToBgCodes (RGB r g b) = ["48", "2", show r, show g, show b]
+colorToBgCodes (RGB r g b)   = ["48", "2", show r, show g, show b]
 
 namedColorCode :: NamedColor -> Int
 namedColorCode = \case
-  Black -> 30
-  Red -> 31
-  Green -> 32
-  Yellow -> 33
-  Blue -> 34
+  Black   -> 30
+  Red     -> 31
+  Green   -> 32
+  Yellow  -> 33
+  Blue    -> 34
   Magenta -> 35
-  Cyan -> 36
-  White -> 37
+  Cyan    -> 36
+  White   -> 37
 
 localLogger
   :: forall a c m mods es b.
@@ -413,9 +413,10 @@ severityThat = contramap (fromMaybe 0 . someSeverity)
 noSeverity :: Predicate LogCat
 noSeverity = Predicate (isNothing . someSeverity)
 
+-- | Use with type applications
 isLogCat :: forall cat. IsLogCat cat => Predicate LogCat
 isLogCat =
-  Predicate $ \(LogCat (x :: cat')) -> case eqT @cat @cat' of
+  Predicate $ \(LogCat (_ :: cat')) -> case eqT @cat @cat' of
     Just Refl -> True
     Nothing -> False
 
@@ -465,9 +466,9 @@ runLogEffect logger = runEffTOuter_ (LogEffectRead logger) LogEffectState
 
 instance SystemModule (LogEffect m a) where
   data ModuleInitData (LogEffect m a) = LogEffectInitData
-    { loggerInitLogger :: Logger IO (LogWithSourceMeta a)
+    { loggerInitLogger   :: Logger IO (LogWithSourceMeta a)
     , loggerInitSeverity :: Maybe LogSeverity
-    , loggerInitCleanup :: Maybe (IO ())
+    , loggerInitCleanup  :: Maybe (IO ())
     }
   data ModuleEvent (LogEffect m a) = LogEffectEvent
 
@@ -480,7 +481,7 @@ instance Loadable c (LogEffect IO a) mods ies where
         runAction = runEffTOuter_ (LogEffectRead baseLogger) LogEffectState act
      in case loggerInitCleanup initData of
           Nothing -> runAction
-          Just cleanup -> bracketEffT (pure ()) (\_ -> liftIO cleanup) (\_ -> runAction)
+          Just cleanup -> bracketEffT (pure ()) (\_ -> liftIO cleanup) (const runAction)
 
 instance EventLoop c (LogEffect m a) mods es
 
@@ -582,8 +583,8 @@ logTHIO cat = [| baseTransform liftIO . logLoc_ @LogDoc $(TH.qLocation >>= TH.li
 defaultStringToLogSeverity :: String -> Either Text LogSeverity
 defaultStringToLogSeverity = \case
   "Debug" -> Right 1
-  "Info" -> Right 2
-  "Warn" -> Right 3
+  "Info"  -> Right 2
+  "Warn"  -> Right 3
   "Error" -> Right 4
   other ->
     maybe
@@ -631,14 +632,14 @@ defaultLoggingOptParser logger cleanup = do
             <> O.metavar "LEVEL"
             <> O.help "Log level, one of 'Debug', 'Info', 'Warn', 'Error', or a number between 0 and 10 with a precision of 1 decimal place"
         )
-  types <-
+  types :: [String] <-
     many $
       O.option O.str
         ( O.long "log-type"
             <> O.metavar "TYPE"
             <> O.help "Log type, can be specified multiple times"
         )
-  nonTypes <-
+  nonTypes :: [String] <-
     many $
       O.option O.str
         ( O.long "no-log-type"
@@ -670,9 +671,9 @@ monadLoggerAdapter logger loc src lev msg =
       { _logEventCats = [mlLogLevelToLogCat lev]
       , _logEventPayload =
           LogWithSourceMeta
-            { _logMetaLoc = Just loc
+            { _logMetaLoc    = Just loc
             , _logMetaSource = Just src
-            , _logMetaDoc = logRaw msg
+            , _logMetaDoc    = logRaw msg
             }
       }
 
@@ -690,9 +691,9 @@ instance (m ~ IO, In' c (LogEffect m LogDoc) mods) => ML.MonadLoggerIO (EffT' c 
              { _logEventCats = [mlLogLevelToLogCat lev]
              , _logEventPayload =
                  LogWithSourceMeta
-                   { _logMetaLoc = Just loc
+                   { _logMetaLoc    = Just loc
                    , _logMetaSource = Just src
-                   , _logMetaDoc = logRaw str
+                   , _logMetaDoc    = logRaw str
                    }
              }
       )
@@ -701,8 +702,8 @@ instance (m ~ IO, In' c (LogEffect m LogDoc) mods) => ML.MonadLoggerIO (EffT' c 
 
 mlLogLevelToLogCat :: ML.LogLevel -> LogCat
 mlLogLevelToLogCat = \case
-  ML.LevelDebug -> LogCat Debug
-  ML.LevelInfo -> LogCat Info
-  ML.LevelWarn -> LogCat Warn
-  ML.LevelError -> LogCat Error
+  ML.LevelDebug   -> LogCat Debug
+  ML.LevelInfo    -> LogCat Info
+  ML.LevelWarn    -> LogCat Warn
+  ML.LevelError   -> LogCat Error
   ML.LevelOther t -> LogCat (Other t)
