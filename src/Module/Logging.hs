@@ -1,4 +1,3 @@
-{-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE GADTs #-}
@@ -77,10 +76,7 @@ module Module.Logging
     -- * Running and Initialization
   , runLogEffect
   , withLiftLogger
-  , defaultLoggingOptParser
   , defaultStringToLogSeverity
-  , defaultLoggingFromEnv
-  , defaultLoggingFromArgs
     -- * Compatibility
   , monadLoggerAdapter
   , mlLogLevelToLogCat
@@ -106,12 +102,10 @@ import Data.String (IsString(..))
 import Data.Text (Text)
 import Data.Typeable
 import Data.Word
+import Text.Read (readMaybe)
 import qualified Control.Monad.Logger as ML
 import qualified Language.Haskell.TH as TH
 import qualified Language.Haskell.TH.Syntax as TH
-import qualified Options.Applicative as O
-import System.Environment (lookupEnv)
-import Text.Read (readMaybe)
 
 type LogSeverity = Fixed E1
 
@@ -133,6 +127,7 @@ someSeverity (LogCat @cat x) = severity @cat x
 someLogCatName :: LogCat -> ML.LogStr
 someLogCatName (LogCat @cat x) = logTypeDisplay @cat x
 
+-- | Carries several log categories and a payload.
 data LogEvent a = LogEvent
   { _logEventCats    :: [LogCat]
   , _logEventPayload :: a
@@ -183,10 +178,10 @@ defaultStyle =
 
 data LogDoc
   = DocEmpty
-  | DocRaw    !ML.LogStr
-  | DocShown  !SomeShown
-  | DocStyled !Style !LogDoc
-  | DocAppend !LogDoc LogDoc
+  | DocRaw    ML.LogStr
+  | DocShown  SomeShown
+  | DocStyled Style  LogDoc
+  | DocAppend LogDoc LogDoc
 
 data StyleMode
   = NoStyles
@@ -466,18 +461,20 @@ runLogEffect logger = runEffTOuter_ (LogEffectRead logger) LogEffectState
 
 instance SystemModule (LogEffect m a) where
   data ModuleInitData (LogEffect m a) = LogEffectInitData
-    { loggerInitLogger   :: Logger IO (LogWithSourceMeta a)
-    , loggerInitSeverity :: Maybe LogSeverity
-    , loggerInitCleanup  :: Maybe (IO ())
+    { loggerInitBase       :: Logger m (LogWithSourceMeta a)
+    , loggerInitCleanup    :: Maybe (m ())
+    , loggerInitTransform  :: Logger m (LogWithSourceMeta a) -> Logger m (LogWithSourceMeta a)
+    , loggerInitSeverity   :: Maybe LogSeverity
     }
   data ModuleEvent (LogEffect m a) = LogEffectEvent
 
 instance Loadable c (LogEffect IO a) mods ies where
   withModule initData act =
-    let baseLogger = case loggerInitSeverity initData of
-          Nothing -> loggerInitLogger initData
+    let transformedLogger = loggerInitTransform initData (loggerInitBase initData)
+        baseLogger = case loggerInitSeverity initData of
+          Nothing -> transformedLogger
           Just sev ->
-            anyLogCat (severityThat $ Predicate (>= sev)) (loggerInitLogger initData)
+            anyLogCat (severityThat $ Predicate (>= sev)) transformedLogger
         runAction = runEffTOuter_ (LogEffectRead baseLogger) LogEffectState act
      in case loggerInitCleanup initData of
           Nothing -> runAction
@@ -507,9 +504,9 @@ logLoc_ loc cat doc =
       { _logEventCats = [LogCat cat]
       , _logEventPayload =
           LogWithSourceMeta
-            { _logMetaLoc = Just loc
+            { _logMetaLoc    = Just loc
             , _logMetaSource = Nothing
-            , _logMetaDoc = doc
+            , _logMetaDoc    = doc
             }
       }
 
@@ -525,9 +522,9 @@ log_ cat doc =
       { _logEventCats = [LogCat cat]
       , _logEventPayload =
           LogWithSourceMeta
-            { _logMetaLoc = Nothing
+            { _logMetaLoc    = Nothing
             , _logMetaSource = Nothing
-            , _logMetaDoc = doc
+            , _logMetaDoc    = doc
             }
       }
 
@@ -543,9 +540,9 @@ logs cats doc =
       { _logEventCats = cats
       , _logEventPayload =
           LogWithSourceMeta
-            { _logMetaLoc = Nothing
+            { _logMetaLoc    = Nothing
             , _logMetaSource = Nothing
-            , _logMetaDoc = doc
+            , _logMetaDoc    = doc
             }
       }
 
@@ -591,72 +588,6 @@ defaultStringToLogSeverity = \case
       (Left "Invalid LogLevel, must be one of 'Debug', 'Info', 'Warn', 'Error', or a number between 0 and 10 with a precision of 1 decimal place")
       Right
       (readMaybe other)
-
-defaultLoggingFromEnv
-  :: Logger IO (LogWithSourceMeta LogDoc)
-  -> Maybe (IO ())
-  -> IO (ModuleInitData LoggingModule)
-defaultLoggingFromEnv logger cleanup = do
-  mLevel <- (readMaybe =<<) <$> lookupEnv "LOG_LEVEL"
-  pure $ LogEffectInitData logger mLevel cleanup
-
-defaultLoggingFromArgs
-  :: Logger IO (LogWithSourceMeta LogDoc)
-  -> Maybe (IO ())
-  -> [String]
-  -> Either Text (ModuleInitData LoggingModule)
-defaultLoggingFromArgs logger cleanup [] =
-  Right $ LogEffectInitData logger Nothing cleanup
-defaultLoggingFromArgs logger cleanup args = do
-  level <- maybe (Right Nothing) (fmap Just) $ detectFlag "--log-level" defaultStringToLogSeverity args
-  types <- sequence $ detectAllFlags "--log-type" (\case "" -> Left "Empty log type"; s -> Right s) args
-  nonTypes <- sequence $ detectAllFlags "--no-log-type" (\case "" -> Left "Empty log type"; s -> Right s) args
-  let logger' =
-        foldr
-          ($)
-          logger
-          ( [anyLogCat (isLogCatName name) | name <- types]
-              <> [excludeLogCat (isLogCatName name) | name <- nonTypes]
-          )
-  pure $ LogEffectInitData logger' level cleanup
-
-defaultLoggingOptParser
-  :: Logger IO (LogWithSourceMeta LogDoc)
-  -> Maybe (IO ())
-  -> O.Parser (ModuleInitData LoggingModule)
-defaultLoggingOptParser logger cleanup = do
-  level <-
-    optional $
-      O.option O.auto
-        ( O.long "log-level"
-            <> O.metavar "LEVEL"
-            <> O.help "Log level, one of 'Debug', 'Info', 'Warn', 'Error', or a number between 0 and 10 with a precision of 1 decimal place"
-        )
-  types :: [String] <-
-    many $
-      O.option O.str
-        ( O.long "log-type"
-            <> O.metavar "TYPE"
-            <> O.help "Log type, can be specified multiple times"
-        )
-  nonTypes :: [String] <-
-    many $
-      O.option O.str
-        ( O.long "no-log-type"
-            <> O.metavar "TYPE"
-            <> O.help "Log type to exclude, can be specified multiple times"
-        )
-  pure $
-    LogEffectInitData
-      ( foldr
-          ($)
-          logger
-          ( [anyLogCat (isLogCatName name) | name <- types]
-              <> [excludeLogCat (isLogCatName name) | name <- nonTypes]
-          )
-      )
-      level
-      cleanup
 
 monadLoggerAdapter
   :: Logger m (LogWithSourceMeta LogDoc)

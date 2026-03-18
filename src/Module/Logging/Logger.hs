@@ -1,6 +1,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE ApplicativeDo         #-}
+{-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE OverloadedRecordDot   #-}
 
 module Module.Logging.Logger
   ( -- * Logger Lifecycle
@@ -24,6 +25,10 @@ module Module.Logging.Logger
   , withLoggerCleanup
   , withBaseLogger
   , withBaseLoggerIO
+    -- * Helpers
+  , defaultLoggingFromEnv
+  , defaultLoggingFromArgs
+  , defaultLoggingOptParser
     -- * Re-exporting fast-logger
   , module System.Log.FastLogger
   ) where
@@ -34,13 +39,18 @@ import Control.Exception (bracket)
 import Control.Lens ((^.))
 import Control.Monad
 import Control.Monad.Effect
+import Control.System (detectFlag, detectAllFlags)
+import Data.Text (Text)
 import Data.Time.Clock
 import Module.Logging
+import System.Environment (lookupEnv)
 import System.Log.FastLogger
 import System.Log.FastLogger.Internal (LogStr(..))
+import Text.Read (readMaybe)
 import qualified Control.Monad.Logger as ML
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BL
+import qualified Options.Applicative as O
 
 data LoggerWithCleanup m a = LoggerWithCleanup
   { baseLogFunc :: a -> m ()
@@ -230,3 +240,64 @@ withBaseLoggerIO createBaseLogger opts action =
     createBaseLogger
     cleanUpFunc
     (\baseLogger -> action $ loggerFromRenderer opts baseLogger.baseLogFunc)
+
+----
+
+defaultLoggingFromEnv
+  :: LoggerWithCleanup IO (LogEvent (LogWithSourceMeta LogDoc))
+  -> IO (ModuleInitData LoggingModule)
+defaultLoggingFromEnv (LoggerWithCleanup logger cleanup) = do
+  mLevel <- (readMaybe =<<) <$> lookupEnv "LOG_LEVEL"
+  pure $ LogEffectInitData (Logger logger) (Just cleanup) id mLevel
+
+defaultLoggingFromArgs
+  :: LoggerWithCleanup IO (LogEvent (LogWithSourceMeta LogDoc))
+  -> [String]
+  -> Either Text (ModuleInitData LoggingModule)
+defaultLoggingFromArgs (LoggerWithCleanup logger cleanup) [] =
+  Right $ LogEffectInitData (Logger logger) (Just cleanup) id Nothing
+defaultLoggingFromArgs (LoggerWithCleanup logger cleanup) args = do
+  level <- maybe (Right Nothing) (fmap Just) $ detectFlag "--log-level" defaultStringToLogSeverity args
+  types <- sequence $ detectAllFlags "--log-type" (\case "" -> Left "Empty log type"; s -> Right s) args
+  nonTypes <- sequence $ detectAllFlags "--no-log-type" (\case "" -> Left "Empty log type"; s -> Right s) args
+  let transform =
+        foldr
+          (.)
+          id
+          ( [anyLogCat (isLogCatName name) | name <- types]
+              <> [excludeLogCat (isLogCatName name) | name <- nonTypes]
+          )
+  pure $ LogEffectInitData (Logger logger) (Just cleanup) transform level
+
+defaultLoggingOptParser
+  :: Applicative m
+  => LoggerWithCleanup m (LogEvent (LogWithSourceMeta LogDoc))
+  -> O.Parser (ModuleInitData (LogEffect m LogDoc))
+defaultLoggingOptParser (LoggerWithCleanup logger cleanup) = do
+  level <-
+    O.optional $
+      O.option O.auto
+        ( O.long "log-level"
+            <> O.metavar "LEVEL"
+            <> O.help "Log level, one of 'Debug', 'Info', 'Warn', 'Error', or a number between 0 and 10 with a precision of 1 decimal place"
+        )
+  types :: [String] <-
+    O.many $
+      O.option O.str
+        ( O.long "log-type"
+            <> O.metavar "TYPE"
+            <> O.help "Log type, can be specified multiple times"
+        )
+  nonTypes :: [String] <-
+    O.many $
+      O.option O.str
+        ( O.long "no-log-type"
+            <> O.metavar "TYPE"
+            <> O.help "Log type to exclude, can be specified multiple times"
+        )
+  pure $
+    LogEffectInitData
+      (Logger logger)
+      (Just cleanup)
+      (foldr (.) id $ [anyLogCat (isLogCatName name) | name <- types] <> [excludeLogCat (isLogCatName name) | name <- nonTypes])
+      level
