@@ -119,6 +119,8 @@ Categories are open and extensible:
 
 ```haskell
 data ProxyLog = Bytes | Logic deriving (Lift)
+-- The `Lift` class is only necessary if you want to use them inside `logTH` template haskell
+-- utilities, otherwise you can remove it.
 
 instance IsLogCat ProxyLog where
   severity Bytes = severity Debug
