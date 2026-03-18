@@ -103,7 +103,11 @@ createStderrBaseLogger = createFastBaseLogger (LogStderr defaultBufSize)
 
 -- | Uses the logger from fast-logger with default buffer-size
 createFileLogger :: MonadIO m => FilePath -> m (LoggerWithCleanup IO LogStr)
-createFileLogger fp = createFastBaseLogger (LogFile (FileLogSpec fp (512 * 1024 * 1024) 3) defaultBufSize)
+createFileLogger fp = createFastBaseLogger (LogFile (FileLogSpec fp (256 * 1024 * 1024) 2) defaultBufSize)
+
+-- | Uses the logger from fast-logger with custom size and number of rotated files
+createFileLoggerWith :: MonadIO m => Integer -> Int -> FilePath -> m (LoggerWithCleanup IO LogStr)
+createFileLoggerWith size n fp = createFastBaseLogger (LogFile (FileLogSpec fp size n) defaultBufSize)
 
 type Timed = Bool
 -- | this formats the logging data and sends it to the provided function
