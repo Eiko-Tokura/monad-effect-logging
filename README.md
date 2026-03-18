@@ -2,13 +2,7 @@
 
 `monad-effect-logging` is a pure structured logging library for the `monad-effect` ecosystem.
 
-The current API is centered on one unified message payload:
-
-- `LogEvent` for the event envelope
-- `LogWithSourceMeta` for source-location metadata
-- `LogDoc` for the structured log message
-- `Logger` for the sink
-- `LogEffect` for the installed effect
+The current API is centered on one unified message payload `LogDoc`.
 
 ## Highlights
 
@@ -26,6 +20,12 @@ The current API is centered on one unified message payload:
 * Open log categories, extensible
 
 ## Core types
+
+- `LogEvent` for the event envelope
+- `LogWithSourceMeta` for source-location metadata
+- `LogDoc` for the structured log message
+- `Logger` for the sink
+- `LogEffect` for the installed effect
 
 ```haskell
 data LogEvent a = LogEvent
