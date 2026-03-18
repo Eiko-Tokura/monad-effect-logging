@@ -1,36 +1,59 @@
-{-# LANGUAGE TemplateHaskell, UndecidableInstances, ApplicativeDo, AllowAmbiguousTypes, DeriveLift, OverloadedRecordDot #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeAbstractions #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
--- | We want a logger that supports open categories, open levels, open severities etc.
--- so that we can filter on different levels for different categories
---
--- finally we will also provide an interface for MonadLogger for compatibility
+
 module Module.Logging
-  ( -- * Definitions
+  ( -- * Core Types
     LogSeverity
   , IsLogCat(..)
   , LogCat(..)
-  , Log(..), logType, logContent
-  , LogMsg(..), logLoc, logSource, logMsg
-  , Logger(..), runLogger
+  , someSeverity
+  , someLogCatName
+    -- * Log Event Model
+  , LogEvent(..)
+  , logEventCats
+  , logEventPayload
+  , LogWithSourceMeta(..)
+  , logMetaLoc
+  , logMetaSource
+  , logMetaDoc
+  , Logger(..)
+  , runLogger
+  , LogEffect
   , Logging
   , LoggingModule
-  -- * Default log categories
+    -- * Structured Log Documents
+  , LogDoc
+  , SomeShown
+  , NamedColor(..)
+  , Color(..)
+  , Style(..)
+  , defaultStyle
+  , StyleMode(..)
+  , DocRenderOptions(..)
+  , defaultDocRenderOptions
+  , renderLogDoc
+  , logRaw
+  , logShow
+  , logFg
+  , logBg
+  , logBold
+    -- * Default Log Categories
   , Debug(..)
   , Info(..)
   , Warn(..)
   , Error(..)
   , Other(..)
-  -- * Default log implementation
-  , toLogStrS
-  , logLog
-  , LogS
-  , LogData
-  -- * Combinators
+    -- * Logger Combinators
   , localLogger
-  , localLog
+  , localLogEvent
   , addLogCat
   , effAddLogCat
-  , effAddLogCat'
   , filterLogCats
   , anyLogCat
   , excludeLogCat
@@ -39,432 +62,579 @@ module Module.Logging
   , isLogCat
   , isLogSubType
   , isLogCatName
-  , someSeverity
-  , someLogCatName
   , liftLogger
-  -- * Running and initializing
-  , runLogging
+    -- * Logging Operations
+  , emitLogEvent
+  , log_
+  , logLoc_
+  , logs
+  , logTH
+  , logLocIO
+  , logIO
+  , logsIO
+  , logTHIO
+    -- * Running and Initialization
+  , runLogEffect
   , withLiftLogger
-  -- * Other optional utilities
-  , defaultLoggingOptParser
   , defaultStringToLogSeverity
-  , defaultLoggingFromEnv
-  , defaultLoggingFromArgs
+    -- * Compatibility
   , monadLoggerAdapter
   , mlLogLevelToLogCat
-
-  -- * Re-export
+    -- * Re-exports
   , ModuleRead(..)
   , ModuleState(..)
   , ModuleInitData(..)
   , ModuleEvent(..)
-  -- * Re-export contravariant functors
   , module Data.Functor.Contravariant
   ) where
 
 import Control.Applicative
 import Control.Lens
-import Control.System
 import Control.Monad
 import Control.Monad.Effect
-import Control.Monad.Logger (Loc(..))
+import Control.System
 import Data.Fixed
 import Data.Functor.Contravariant
 import Data.Kind
+import Data.List (intercalate)
 import Data.Maybe
+import Data.String (IsString(..))
 import Data.Text (Text)
 import Data.Typeable
-import qualified Options.Applicative  as O
-import qualified Control.Monad.Logger as ML
-
-import System.Environment
+import Data.Word
 import Text.Read (readMaybe)
-
+import qualified Control.Monad.Logger as ML
+import qualified Language.Haskell.TH as TH
 import qualified Language.Haskell.TH.Syntax as TH
 
--- | so user can interpolate between levels easily
---
--- by default, Debug = 1, Info = 2, Warn = 3, Error = 4
--- you can use anything in between, with a precision of 1 decimal place
--- for example, 2.5 is between Info and Warn
 type LogSeverity = Fixed E1
 
--- | So every module can have its own logging category type, for example
--- Database module can have `data Database` used as a log type
---
--- and have a subtype
--- @
--- data DatabaseSubType = ConnectionPool | Query | Migration | Cursor deriving (Show, Eq)
--- @
---
--- you can then write instance
---
--- @
--- instance IsLogCat DatabaseSubType where
---   severity _    = Nothing
---   logTypeDisplay _ = "DB"
--- @
-class Typeable sub => IsLogCat (sub :: Type) where
-  severity :: sub -> Maybe LogSeverity
+class Typeable cat => IsLogCat (cat :: Type) where
+  severity :: cat -> Maybe LogSeverity
   severity _ = Nothing
-  {-# INLINE severity #-}
-  -- | This is used for display only
-  logTypeDisplay :: sub -> ML.LogStr
+  logTypeDisplay :: cat -> ML.LogStr
   {-# MINIMAL logTypeDisplay #-}
 
 instance IsLogCat Text where
   logTypeDisplay = ML.toLogStr
-  {-# INLINE logTypeDisplay #-}
 
--- | An exsitential type that wraps all logging categories, it is easy to define a new instance
 data LogCat where
-  LogCat :: forall sub. IsLogCat sub => sub -> LogCat
+  LogCat :: forall cat. IsLogCat cat => cat -> LogCat
 
 someSeverity :: LogCat -> Maybe LogSeverity
-someSeverity (LogCat @a subType) = severity @a subType
-{-# INLINE someSeverity #-}
+someSeverity (LogCat @cat x) = severity @cat x
 
 someLogCatName :: LogCat -> ML.LogStr
-someLogCatName (LogCat @a subType) = logTypeDisplay @a subType
-{-# INLINE someLogCatName #-}
+someLogCatName (LogCat @cat x) = logTypeDisplay @cat x
 
-data Log a = Log
-  { _logType    :: [LogCat]
-  , _logContent :: a
-  } deriving (Functor)
+-- | Carries several log categories and a payload.
+data LogEvent a = LogEvent
+  { _logEventCats    :: [LogCat]
+  , _logEventPayload :: a
+  }
+  deriving (Functor)
 
-type LogS = LogMsg ML.LogStr
+data LogWithSourceMeta a = LogWithSourceMeta
+  { _logMetaLoc    :: Maybe ML.Loc
+  , _logMetaSource :: Maybe ML.LogSource
+  , _logMetaDoc    :: a
+  }
+  deriving (Functor)
 
-type LogData = LogS
-{-# DEPRECATED LogData "Use LogS instead" #-}
+data SomeShown where
+  SomeShown :: Show a => a -> SomeShown
 
-data LogMsg a = LogMsg
-  { _logLoc    :: Maybe ML.Loc
-  , _logSource :: Maybe ML.LogSource
-  , _logMsg    :: a
+data NamedColor
+  = Black
+  | Red
+  | Green
+  | Yellow
+  | Blue
+  | Magenta
+  | Cyan
+  | White
+  deriving (Eq, Show)
+
+data Color
+  = DefaultColor
+  | Named !NamedColor
+  | RGB   !Word8 !Word8 !Word8
+  deriving (Eq, Show)
+
+data Style = Style
+  { styleFg   :: Maybe Color
+  , styleBg   :: Maybe Color
+  , styleBold :: Bool
+  }
+  deriving (Eq, Show)
+
+defaultStyle :: Style
+defaultStyle =
+  Style
+    { styleFg   = Nothing
+    , styleBg   = Nothing
+    , styleBold = False
+    }
+
+data LogDoc
+  = DocEmpty
+  | DocRaw    ML.LogStr
+  | DocShown  SomeShown
+  | DocStyled Style  LogDoc
+  | DocAppend LogDoc LogDoc
+
+data StyleMode
+  = NoStyles
+  | AnsiStyles
+  deriving (Eq, Show)
+
+data DocRenderOptions = DocRenderOptions
+  { docRenderShow      :: forall a. Show a => a -> ML.LogStr
+  , docRenderStyleMode :: StyleMode
   }
 
-makeLenses ''Log
-makeLenses ''LogMsg
-makeLenses ''Loc
-
-instance Functor LogMsg where
-  fmap f logMsg' = logMsg' { _logMsg = f (_logMsg logMsg') }
-  {-# INLINE fmap #-}
-
-instance Semigroup a => Semigroup (LogMsg a) where
-  l1 <> l2 = LogMsg
-    { _logLoc = l1 ^. logLoc <|> l2 ^. logLoc
-    , _logSource = l1 ^. logSource <|> l2 ^. logSource
-    , _logMsg = l1 ^. logMsg <> l2 ^. logMsg
+defaultDocRenderOptions :: DocRenderOptions
+defaultDocRenderOptions =
+  DocRenderOptions
+    { docRenderShow      = ML.toLogStr . show
+    , docRenderStyleMode = NoStyles
     }
-  {-# INLINE (<>) #-}
 
-instance Monoid a => Monoid (LogMsg a) where
-  mempty = LogMsg Nothing Nothing mempty
-  {-# INLINE mempty #-}
+makeLenses ''LogEvent
+makeLenses ''LogWithSourceMeta
 
--- | Some default log types, you can easily define your own
-data    Debug = Debug  deriving TH.Lift
-data    Info  = Info   deriving TH.Lift
-data    Warn  = Warn   deriving TH.Lift
-data    Error = Error  deriving TH.Lift
-newtype Other = Other Text  deriving TH.Lift
+instance Semigroup a => Semigroup (LogEvent a) where
+  LogEvent catsA payloadA <> LogEvent catsB payloadB =
+    LogEvent (catsA <> catsB) (payloadA <> payloadB)
 
-instance IsLogCat Debug where severity _ = Just 1; logTypeDisplay _ = "DEBUG"
-instance IsLogCat Info  where severity _ = Just 2; logTypeDisplay _ = "INFO"
-instance IsLogCat Warn  where severity _ = Just 3; logTypeDisplay _ = "WARN"
-instance IsLogCat Error where severity _ = Just 4; logTypeDisplay _ = "ERROR"
+instance Monoid a => Monoid (LogEvent a) where
+  mempty = LogEvent [] mempty
+
+instance Applicative LogEvent where
+  pure = LogEvent []
+  LogEvent catsF f <*> LogEvent catsA a = LogEvent (catsF <> catsA) (f a)
+
+instance Monad LogEvent where
+  LogEvent catsA a >>= f =
+    let LogEvent catsB b = f a
+     in LogEvent (catsA <> catsB) b
+
+instance Semigroup a => Semigroup (LogWithSourceMeta a) where
+  metaA <> metaB =
+    LogWithSourceMeta
+      { _logMetaLoc    = _logMetaLoc    metaA <|> _logMetaLoc    metaB
+      , _logMetaSource = _logMetaSource metaA <|> _logMetaSource metaB
+      , _logMetaDoc    = _logMetaDoc    metaA <>  _logMetaDoc    metaB
+      }
+
+instance Monoid a => Monoid (LogWithSourceMeta a) where
+  mempty = LogWithSourceMeta Nothing Nothing mempty
+
+instance IsString LogDoc where
+  fromString = DocRaw . ML.toLogStr
+
+instance Semigroup LogDoc where
+  (<>) = DocAppend
+
+instance Monoid LogDoc where
+  mempty = DocEmpty
+
+data Debug    = Debug      deriving TH.Lift
+data Info     = Info       deriving TH.Lift
+data Warn     = Warn       deriving TH.Lift
+data Error    = Error      deriving TH.Lift
+newtype Other = Other Text deriving TH.Lift
+
+instance IsLogCat Debug where
+  severity _ = Just 1
+  logTypeDisplay _ = "DEBUG"
+
+instance IsLogCat Info where
+  severity _ = Just 2
+  logTypeDisplay _ = "INFO"
+
+instance IsLogCat Warn where
+  severity _ = Just 3
+  logTypeDisplay _ = "WARN"
+
+instance IsLogCat Error where
+  severity _ = Just 4
+  logTypeDisplay _ = "ERROR"
+
 instance IsLogCat Other where
   severity _ = Just 2
   logTypeDisplay (Other t) = "OTHER:" <> ML.toLogStr t
 
-instance Semigroup a => Semigroup (Log a) where
-  Log t1 c1 <> Log t2 c2 = Log (t1 <> t2) (c1 <> c2)
-  {-# INLINE (<>) #-}
-
-instance Monoid a => Monoid (Log a) where
-  mempty = Log [] mempty
-  {-# INLINE mempty #-}
-
-instance Applicative Log where
-  pure = Log []
-  {-# INLINE pure #-}
-  Log t1 f <*> Log t2 a = Log (t1 <> t2) (f a)
-  {-# INLINE (<*>) #-}
-
-instance Monad Log where
-  (Log t a) >>= f =
-    let Log t' a' = f a
-    in Log (t <> t') a'
-  {-# INLINE (>>=) #-}
-
 type Logger :: (Type -> Type) -> Type -> Type
 newtype Logger m a = Logger
-  { _runLogger :: Log a -> m ()
+  { _runLogger :: LogEvent a -> m ()
   }
 
-liftLogger :: (m () -> n ()) -> Logger m b -> Logger n b
-liftLogger f (Logger g) = Logger (f . g)
-{-# INLINE liftLogger #-}
+runLogger :: Logger m a -> LogEvent a -> m ()
+runLogger = _runLogger
 
-makeLenses ''Logger
+liftLogger :: (m () -> n ()) -> Logger m a -> Logger n a
+liftLogger nat (Logger f) = Logger (nat . f)
 
 instance Applicative m => Semigroup (Logger m a) where
-  Logger f <> Logger g = Logger $ \log' -> f log' *> g log'
-  {-# INLINE (<>) #-}
+  Logger f <> Logger g = Logger $ \entry -> f entry *> g entry
 
 instance Applicative m => Monoid (Logger m a) where
   mempty = Logger $ const $ pure ()
-  {-# INLINE mempty #-}
 
 instance Contravariant (Logger m) where
   contramap f (Logger g) = Logger (g . fmap f)
-  {-# INLINE contramap #-}
 
---------------------------------------------------------------------------------
--- $ Some combinators for logger filtering
---
--- You can use these combinators to filter logs based on their types and severities.
--- Example:
---
--- @
--- localLogger
---   ( anyLogCat (severityThat $ Predicate (>= 1))
---   . excludeLogCat (isLogCat @Database)
---   ) $ do
---     ...
--- @
+logRaw :: ML.LogStr -> LogDoc
+logRaw = DocRaw
 
--- | Locally modify the logger
-localLogger :: forall a c m mods es b. (Monad m, In' c (Logging m a) mods) => (Logger m a -> Logger m a) -> EffT' c mods es m b -> EffT' c mods es m b
-localLogger f = localModule (\(LoggingRead logger) -> LoggingRead (f logger))
-{-# INLINE localLogger #-}
+logShow :: Show a => a -> LogDoc
+logShow = DocShown . SomeShown
 
--- | Locally modify the log
-localLog :: forall a m mods es c. (Monad m, Logging m a `In` mods) => (Log a -> Log a) -> EffT mods es m c -> EffT mods es m c
-localLog f = localLogger $ over runLogger (. f)
-{-# INLINE localLog #-}
+logFg :: Color -> LogDoc -> LogDoc
+logFg color = DocStyled defaultStyle {styleFg = Just color}
 
--- | Add a log category to the log
--- @
--- localLogger (addLogCat $ LogCat ConnectionPool) $ do
---   ...
--- @
+logBg :: Color -> LogDoc -> LogDoc
+logBg color = DocStyled defaultStyle {styleBg = Just color}
+
+logBold :: LogDoc -> LogDoc
+logBold = DocStyled defaultStyle {styleBold = True}
+
+renderLogDoc :: DocRenderOptions -> LogDoc -> ML.LogStr
+renderLogDoc opts = case docRenderStyleMode opts of
+  NoStyles -> goPlain
+  AnsiStyles -> goAnsi defaultStyle
+  where
+    goPlain DocEmpty                 = mempty
+    goPlain (DocRaw str)             = str
+    goPlain (DocShown (SomeShown x)) = docRenderShow opts x
+    goPlain (DocStyled _ doc)        = goPlain doc
+    goPlain (DocAppend a b)          = goPlain a <> goPlain b
+
+    goAnsi _       DocEmpty                 = mempty
+    goAnsi _       (DocRaw str)             = str
+    goAnsi _       (DocShown (SomeShown x)) = docRenderShow opts x
+    goAnsi current (DocAppend a b)          = goAnsi current a <> goAnsi current b
+    goAnsi current (DocStyled style doc)    =
+      let merged = mergeStyle current style
+       in ansiForStyle merged <> goAnsi merged doc <> ansiForStyle current
+
+mergeStyle :: Style -> Style -> Style
+mergeStyle outer inner =
+  Style
+    { styleFg   = styleFg   inner <|> styleFg   outer
+    , styleBg   = styleBg   inner <|> styleBg   outer
+    , styleBold = styleBold outer ||  styleBold inner
+    }
+
+ansiForStyle :: Style -> ML.LogStr
+ansiForStyle style =
+  ML.toLogStr $ "\ESC[" <> intercalate ";" codes <> "m"
+  where
+    codes =
+      let baseCodes =
+            concat
+              [ maybe [] colorToFgCodes (styleFg style)
+              , maybe [] colorToBgCodes (styleBg style)
+              , ["1" | styleBold style]
+              ]
+       in if null baseCodes then ["0"] else baseCodes
+
+colorToFgCodes :: Color -> [String]
+colorToFgCodes DefaultColor  = ["39"]
+colorToFgCodes (Named color) = [show $ namedColorCode color]
+colorToFgCodes (RGB r g b)   = ["38", "2", show r, show g, show b]
+
+colorToBgCodes :: Color -> [String]
+colorToBgCodes DefaultColor  = ["49"]
+colorToBgCodes (Named color) = [show $ namedColorCode color + 10]
+colorToBgCodes (RGB r g b)   = ["48", "2", show r, show g, show b]
+
+namedColorCode :: NamedColor -> Int
+namedColorCode = \case
+  Black   -> 30
+  Red     -> 31
+  Green   -> 32
+  Yellow  -> 33
+  Blue    -> 34
+  Magenta -> 35
+  Cyan    -> 36
+  White   -> 37
+
+localLogger
+  :: forall a c m mods es b.
+     (Monad m, In' c (LogEffect m a) mods)
+  => (Logger m (LogWithSourceMeta a) -> Logger m (LogWithSourceMeta a))
+  -> EffT' c mods es m b
+  -> EffT' c mods es m b
+localLogger f =
+  localModule (\(LogEffectRead logger) -> LogEffectRead (f logger))
+
+localLogEvent
+  :: forall a m mods es c.
+     (Monad m, LogEffect m a `In` mods)
+  => (LogEvent (LogWithSourceMeta a) -> LogEvent (LogWithSourceMeta a))
+  -> EffT mods es m c
+  -> EffT mods es m c
+localLogEvent f = localLogger $ \(Logger g) -> Logger (g . f)
+
 addLogCat :: LogCat -> Logger m a -> Logger m a
-addLogCat t = over runLogger (. over logType (t:))
-{-# INLINE addLogCat #-}
+addLogCat cat (Logger g) =
+  Logger $ \entry -> g entry {_logEventCats = cat : _logEventCats entry}
 
--- | Add a log category to the log in EffT
--- @
--- effAddLogCat @LogS (LogCat ConnectionPool) $ do
---   ...
--- @
-effAddLogCat :: forall a c mods es m b. (Monad m, In' c (Logging m a) mods) => LogCat -> EffT' c mods es m b -> EffT' c mods es m b
-effAddLogCat logCat = localLogger @a (addLogCat logCat)
-{-# INLINE effAddLogCat #-}
-
--- | Add a log category to the log in EffT (defaulting to In (Logging m LogS) mods)
--- @
--- effAddLogCat' (LogCat ConnectionPool) $ do
---   ...
--- @
-effAddLogCat' :: forall c mods es m b. (Monad m, In' c (Logging m LogS) mods) => LogCat -> EffT' c mods es m b -> EffT' c mods es m b
-effAddLogCat' logCat = localLogger @LogS (addLogCat logCat)
-{-# INLINE effAddLogCat' #-}
+effAddLogCat
+  :: forall a c mods es m b.
+     (Monad m, In' c (LogEffect m a) mods)
+  => LogCat
+  -> EffT' c mods es m b
+  -> EffT' c mods es m b
+effAddLogCat cat = localLogger @a (addLogCat cat)
 
 filterLogCats :: Applicative m => Predicate [LogCat] -> Logger m a -> Logger m a
-filterLogCats p (Logger logger) = Logger $ \log' -> when (p.getPredicate $ log' ^. logType) $ logger log'
-{-# INLINE filterLogCats #-}
+filterLogCats p (Logger logger) =
+  Logger $ \entry ->
+    when (getPredicate p $ _logEventCats entry) $
+      logger entry
 
 anyLogCat :: Applicative m => Predicate LogCat -> Logger m a -> Logger m a
-anyLogCat p = filterLogCats (Predicate $ any p.getPredicate)
-{-# INLINE anyLogCat #-}
+anyLogCat p = filterLogCats (Predicate $ any (getPredicate p))
 
 excludeLogCat :: Applicative m => Predicate LogCat -> Logger m a -> Logger m a
-excludeLogCat p = filterLogCats (Predicate $ not . any p.getPredicate)
-{-# INLINE excludeLogCat #-}
+excludeLogCat p = filterLogCats (Predicate $ not . any (getPredicate p))
 
 severityThat :: Predicate LogSeverity -> Predicate LogCat
 severityThat = contramap (fromMaybe 0 . someSeverity)
-{-# INLINE severityThat #-}
 
 noSeverity :: Predicate LogCat
 noSeverity = Predicate (isNothing . someSeverity)
-{-# INLINE noSeverity #-}
 
--- | use type applications to check if a log type is present
-isLogCat :: forall sub. IsLogCat sub => Predicate LogCat
-isLogCat = Predicate $ \(LogCat (_ :: sub')) -> case eqT @sub @sub' of
-  Just Refl -> True
-  Nothing   -> False
-{-# INLINE isLogCat #-}
+-- | Use with type applications
+isLogCat :: forall cat. IsLogCat cat => Predicate LogCat
+isLogCat =
+  Predicate $ \(LogCat (_ :: cat')) -> case eqT @cat @cat' of
+    Just Refl -> True
+    Nothing -> False
 
-isLogSubType :: forall sub. IsLogCat sub => Predicate sub -> Predicate LogCat
-isLogSubType p = Predicate $ \(LogCat (subType :: sub')) -> case eqT @sub @sub' of
-  Just Refl -> p.getPredicate subType
-  Nothing   -> False
-{-# INLINE isLogSubType #-}
+isLogSubType :: forall cat. IsLogCat cat => Predicate cat -> Predicate LogCat
+isLogSubType p =
+  Predicate $ \(LogCat (x :: cat')) -> case eqT @cat @cat' of
+    Just Refl -> getPredicate p x
+    Nothing -> False
 
 isLogCatName :: ML.ToLogStr n => n -> Predicate LogCat
-isLogCatName name = Predicate $ \logCat -> someLogCatName logCat == ML.toLogStr name
-{-# INLINE isLogCatName #-}
+isLogCatName name =
+  Predicate $ \logCat -> someLogCatName logCat == ML.toLogStr name
 
--- | The Logging m module type, a module `Logging m a` provides logging capabilities for logs of type `a`
-type Logging :: (Type -> Type) -> Type -> Type
-data Logging m a
+type LogEffect :: (Type -> Type) -> Type -> Type
+data LogEffect m a
 
-type LoggingModule = Logging IO LogS -- standard logging module
+type Logging = LogEffect
+
+type LoggingModule = LogEffect IO LogDoc
 
 withLiftLogger
   :: forall m n c a mods es b.
-  ( Monad m
-  , In' c (Logging m a) (Logging m a : mods)
-  , ConsFDataList c (Logging n a : mods)
-  , ConsFDataList c (Logging m a : mods)
-  )
-  => (forall x. m x -> n x) -> EffT' c (Logging n a : mods) es m b -> EffT' c (Logging m a : mods) es m b
+     ( Monad m
+     , In' c (LogEffect m a) (LogEffect m a : mods)
+     , ConsFDataList c (LogEffect n a : mods)
+     , ConsFDataList c (LogEffect m a : mods)
+     )
+  => (forall x. m x -> n x)
+  -> EffT' c (LogEffect n a : mods) es m b
+  -> EffT' c (LogEffect m a : mods) es m b
 withLiftLogger lifter act = do
-  LoggingRead logger <- askModule @(Logging m a)
-  let logger' = liftLogger lifter logger
-  embedMods $ runEffTOuter_ (LoggingRead logger') LoggingState act
+  LogEffectRead logger <- askModule @(LogEffect m a)
+  embedMods $ runEffTOuter_ (LogEffectRead $ liftLogger lifter logger) LogEffectState act
 
-instance Module (Logging m (a :: Type)) where
-  newtype ModuleRead  (Logging m a) = LoggingRead
-    { logging :: Logger m a
+instance Module (LogEffect m a) where
+  newtype ModuleRead (LogEffect m a) = LogEffectRead
+    { logging :: Logger m (LogWithSourceMeta a)
     }
-  data    ModuleState (Logging m a) = LoggingState
+  data ModuleState (LogEffect m a) = LogEffectState
 
-runLogging
-  :: (ConsFDataList c (Logging m logS : mods), Monad m) => Logger m logS
-  -> EffT' c (Logging m logS : mods) es m a
-  -> EffT' c mods es m a
-runLogging logger = runEffTOuter_ (LoggingRead logger) LoggingState
-{-# INLINE runLogging #-}
+runLogEffect
+  :: (ConsFDataList c (LogEffect m a : mods), Monad m)
+  => Logger m (LogWithSourceMeta a)
+  -> EffT' c (LogEffect m a : mods) es m b
+  -> EffT' c mods es m b
+runLogEffect logger = runEffTOuter_ (LogEffectRead logger) LogEffectState
 
-instance SystemModule (Logging m a) where
-  data    ModuleInitData (Logging m a) = LoggingInitData
-    { loggerInitLogger   :: Logger IO a
-    , loggerInitSeverity :: Maybe LogSeverity
-    , loggerInitCleanup  :: Maybe (IO ())
+instance SystemModule (LogEffect m a) where
+  data ModuleInitData (LogEffect m a) = LogEffectInitData
+    { loggerInitBase       :: Logger m (LogWithSourceMeta a)
+    , loggerInitCleanup    :: Maybe (m ())
+    , loggerInitTransform  :: Logger m (LogWithSourceMeta a) -> Logger m (LogWithSourceMeta a)
+    , loggerInitSeverity   :: Maybe LogSeverity
     }
-  data    ModuleEvent    (Logging m a) = LoggingEvent
+  data ModuleEvent (LogEffect m a) = LogEffectEvent
 
-instance Loadable c (Logging IO a) mods ies where
-  withModule (LoggingInitData logger mSev Nothing) act = case mSev of
-    Nothing -> runEffTOuter_ (LoggingRead logger) LoggingState act
-    Just s -> runEffTOuter_ (LoggingRead $ anyLogCat (severityThat $ Predicate (>= s)) logger) LoggingState act
-  withModule (LoggingInitData logger mSev (Just clean)) act = bracketEffT (return ()) (\_ -> liftIO clean) (\_ -> case mSev of
-      Nothing -> runEffTOuter_ (LoggingRead logger) LoggingState act
-      Just s -> runEffTOuter_ (LoggingRead $ anyLogCat (severityThat $ Predicate (>= s)) logger) LoggingState act
-    )
-  {-# INLINE withModule #-}
+instance Loadable c (LogEffect IO a) mods ies where
+  withModule initData act =
+    let transformedLogger = loggerInitTransform initData (loggerInitBase initData)
+        baseLogger = case loggerInitSeverity initData of
+          Nothing -> transformedLogger
+          Just sev ->
+            anyLogCat (severityThat $ Predicate (>= sev)) transformedLogger
+        runAction = runEffTOuter_ (LogEffectRead baseLogger) LogEffectState act
+     in case loggerInitCleanup initData of
+          Nothing -> runAction
+          Just cleanup -> bracketEffT (pure ()) (\_ -> liftIO cleanup) (const runAction)
 
-instance EventLoop c (Logging m a) mods es
+instance EventLoop c (LogEffect m a) mods es
 
--- | Maps 'Debug', 'Info', 'Warn', 'Error' to 1, 2, 3, 4 respectively
--- and also accepts numbers between 0 and 10 with a precision of 1 decimal place
+emitLogEvent
+  :: forall a c mods es m.
+     (Monad m, In' c (LogEffect m a) mods)
+  => LogEvent (LogWithSourceMeta a)
+  -> EffT' c mods es m ()
+emitLogEvent entry = do
+  action <- asksModule @(LogEffect m a) (runLogger . logging)
+  lift $ action entry
+
+logLoc_
+  :: forall a c mods es m cat.
+     (Monad m, In' c (LogEffect m a) mods, IsLogCat cat)
+  => ML.Loc
+  -> cat
+  -> a
+  -> EffT' c mods es m ()
+logLoc_ loc cat doc =
+  emitLogEvent $
+    LogEvent
+      { _logEventCats = [LogCat cat]
+      , _logEventPayload =
+          LogWithSourceMeta
+            { _logMetaLoc    = Just loc
+            , _logMetaSource = Nothing
+            , _logMetaDoc    = doc
+            }
+      }
+
+log_
+  :: forall a c mods es m cat.
+     (Monad m, In' c (LogEffect m a) mods, IsLogCat cat)
+  => cat
+  -> a
+  -> EffT' c mods es m ()
+log_ cat doc =
+  emitLogEvent $
+    LogEvent
+      { _logEventCats = [LogCat cat]
+      , _logEventPayload =
+          LogWithSourceMeta
+            { _logMetaLoc    = Nothing
+            , _logMetaSource = Nothing
+            , _logMetaDoc    = doc
+            }
+      }
+
+logs
+  :: forall a c mods es m.
+     (Monad m, In' c (LogEffect m a) mods)
+  => [LogCat]
+  -> a
+  -> EffT' c mods es m ()
+logs cats doc =
+  emitLogEvent $
+    LogEvent
+      { _logEventCats = cats
+      , _logEventPayload =
+          LogWithSourceMeta
+            { _logMetaLoc    = Nothing
+            , _logMetaSource = Nothing
+            , _logMetaDoc    = doc
+            }
+      }
+
+logTH :: (IsLogCat cat, TH.Lift cat) => cat -> TH.Q TH.Exp
+logTH cat = [| logLoc_ $(TH.qLocation >>= TH.lift) $(TH.lift cat) |]
+
+logLocIO
+  :: forall a c mods es m cat.
+     (MonadIO m, In' c (LogEffect IO a) mods, IsLogCat cat)
+  => ML.Loc
+  -> cat
+  -> a
+  -> EffT' c mods es m ()
+logLocIO loc cat = baseTransform liftIO . logLoc_ @a loc cat
+
+logIO
+  :: forall a c mods es m cat.
+     (MonadIO m, In' c (LogEffect IO a) mods, IsLogCat cat)
+  => cat
+  -> a
+  -> EffT' c mods es m ()
+logIO cat = baseTransform liftIO . log_ @a cat
+
+logsIO
+  :: forall a c mods es m.
+     (MonadIO m, In' c (LogEffect IO a) mods)
+  => [LogCat]
+  -> a
+  -> EffT' c mods es m ()
+logsIO cats = baseTransform liftIO . logs @a cats
+
+logTHIO :: (IsLogCat cat, TH.Lift cat) => cat -> TH.Q TH.Exp
+logTHIO cat = [| baseTransform liftIO . logLoc_ @LogDoc $(TH.qLocation >>= TH.lift) $(TH.lift cat) |]
+
 defaultStringToLogSeverity :: String -> Either Text LogSeverity
 defaultStringToLogSeverity = \case
   "Debug" -> Right 1
   "Info"  -> Right 2
   "Warn"  -> Right 3
   "Error" -> Right 4
-  other   -> maybe (Left "Invalid LogLevel, must be one of 'Debug', 'Info', 'Warn', 'Error', or a number between 0 and 10 with a precision of 1 decimal place") Right
-    $ readMaybe other
-{-# INLINABLE defaultStringToLogSeverity #-}
+  other ->
+    maybe
+      (Left "Invalid LogLevel, must be one of 'Debug', 'Info', 'Warn', 'Error', or a number between 0 and 10 with a precision of 1 decimal place")
+      Right
+      (readMaybe other)
 
--- | Load a log level from environment variable LOG_LEVEL,
-defaultLoggingFromEnv :: Logger IO LogS -> Maybe (IO ()) -> IO (ModuleInitData LoggingModule)
-defaultLoggingFromEnv logger mcl = do
-  mLogLevel <- liftIO $ (readMaybe =<<) <$> lookupEnv "LOG_LEVEL"
-  return $ LoggingInitData logger mLogLevel mcl
-{-# INLINABLE defaultLoggingFromEnv #-}
-
--- | Load an argument --log-level <level> from command line arguments,
--- if none is provided, it will log everything (Maybe LogSeverity = Nothing)
-defaultLoggingFromArgs :: Logger IO LogS -> Maybe (IO ()) -> [String] -> Either Text (ModuleInitData LoggingModule)
-defaultLoggingFromArgs logger mcl []         = Right $ LoggingInitData logger Nothing mcl
-defaultLoggingFromArgs logger mcl args@(_:_) = do
-  level    <- maybe (Right Nothing) (fmap Just) $ detectFlag "--log-level" defaultStringToLogSeverity args
-  types    <- sequence $ detectAllFlags "--log-type"    (\case "" -> Left "Empty log type"; s -> Right s) args
-  nonTypes <- sequence $ detectAllFlags "--no-log-type" (\case "" -> Left "Empty log type"; s -> Right s) args
-  let logger' = foldr ($) logger (  [ anyLogCat     (isLogCatName name) | name <- types ]
-                                 <> [ excludeLogCat (isLogCatName name) | name <- nonTypes ]
-                                 )
-  return $ LoggingInitData logger' level mcl
-{-# INLINABLE defaultLoggingFromArgs #-}
-
-defaultLoggingOptParser :: Logger IO LogS -> Maybe (IO ()) -> O.Parser (ModuleInitData LoggingModule)
-defaultLoggingOptParser logger mcl = do
-  level :: Maybe LogSeverity
-    <- optional $ O.option O.auto
-      (  O.long "log-level"
-      <> O.metavar "LEVEL"
-      <> O.help "Log level, one of 'Debug', 'Info', 'Warn', 'Error', or a number between 0 and 10 with a precision of 1 decimal place"
-      )
-  types :: [String]
-    <- many $ O.option O.str
-      (  O.long "log-type"
-      <> O.metavar "TYPE"
-      <> O.help "Log type, can be specified multiple times"
-      )
-  nonTypes :: [String]
-    <- many $ O.option O.str
-      (  O.long "no-log-type"
-      <> O.metavar "TYPE"
-      <> O.help "Log type to exclude, can be specified multiple times"
-      )
-  return $ LoggingInitData
-    (foldr ($) logger (  [ anyLogCat     (isLogCatName name) | name <- types ]
-                                       <> [ excludeLogCat (isLogCatName name) | name <- nonTypes ]
-                      )
-    ) level mcl
-
-
-monadLoggerAdapter :: Logger m LogS -> ML.Loc -> ML.LogSource -> ML.LogLevel -> ML.LogStr -> m ()
-monadLoggerAdapter logger loc src lev msg = _runLogger logger Log
-  { _logType = [mlLogLevelToLogCat lev]
-  , _logContent = LogMsg
-      { _logLoc    = Just loc
-      , _logSource = Just src
-      , _logMsg    = msg
+monadLoggerAdapter
+  :: Logger m (LogWithSourceMeta LogDoc)
+  -> ML.Loc
+  -> ML.LogSource
+  -> ML.LogLevel
+  -> ML.LogStr
+  -> m ()
+monadLoggerAdapter logger loc src lev msg =
+  runLogger logger $
+    LogEvent
+      { _logEventCats = [mlLogLevelToLogCat lev]
+      , _logEventPayload =
+          LogWithSourceMeta
+            { _logMetaLoc    = Just loc
+            , _logMetaSource = Just src
+            , _logMetaDoc    = logRaw msg
+            }
       }
-  }
-{-# INLINE monadLoggerAdapter #-}
 
--- | This provides an interface to MonadLogger
-instance (Monad m, In' c (Logging m LogS) mods) => ML.MonadLogger (EffT' c mods es m) where
-  monadLoggerLog loc logsource loglevel msg = do
-    LoggingRead logger <- queryModule @(Logging m LogS)
-    lift $ monadLoggerAdapter logger loc logsource loglevel (ML.toLogStr msg)
-  {-# INLINE monadLoggerLog #-}
+instance (Monad m, In' c (LogEffect m LogDoc) mods) => ML.MonadLogger (EffT' c mods es m) where
+  monadLoggerLog loc src lev msg = do
+    LogEffectRead logger <- queryModule @(LogEffect m LogDoc)
+    lift $ monadLoggerAdapter logger loc src lev (ML.toLogStr msg)
 
-instance (m ~ IO, In' c (Logging m LogS) mods) => ML.MonadLoggerIO (EffT' c mods es m) where
-  askLoggerIO = queriesModule @(Logging m LogS) $ (\f loc src lev str -> f
-    $ Log [mlLogLevelToLogCat lev]
-    $ LogMsg
-      { _logLoc    = Just loc
-      , _logSource = Just src
-      , _logMsg    = str
-      }
-    ) . _runLogger . logging
-  {-# INLINE askLoggerIO #-}
+instance (m ~ IO, In' c (LogEffect m LogDoc) mods) => ML.MonadLoggerIO (EffT' c mods es m) where
+  askLoggerIO =
+    queriesModule @(LogEffect m LogDoc) $
+      (\f loc src lev str ->
+         f $
+           LogEvent
+             { _logEventCats = [mlLogLevelToLogCat lev]
+             , _logEventPayload =
+                 LogWithSourceMeta
+                   { _logMetaLoc    = Just loc
+                   , _logMetaSource = Just src
+                   , _logMetaDoc    = logRaw str
+                   }
+             }
+      )
+        . runLogger
+        . logging
 
--- | A compatibility function that works for the old MonadLogger instances
 mlLogLevelToLogCat :: ML.LogLevel -> LogCat
-mlLogLevelToLogCat ML.LevelDebug     = LogCat Debug
-mlLogLevelToLogCat ML.LevelInfo      = LogCat Info
-mlLogLevelToLogCat ML.LevelWarn      = LogCat Warn
-mlLogLevelToLogCat ML.LevelError     = LogCat Error
-mlLogLevelToLogCat (ML.LevelOther t) = LogCat (Other t)
-{-# INLINE mlLogLevelToLogCat #-}
-
-logLog :: forall a c mods es m. (Monad m, In' c (Logging m a) mods) => Log a -> EffT' c mods es m ()
-logLog logd = asksModule @(Logging m a) (_runLogger . logging) >>= (\action -> lift $ action logd)
-{-# INLINABLE logLog #-}
-
--- | Apply 'show' to convert a value to LogStr
-toLogStrS :: Show a => a -> ML.LogStr
-toLogStrS = ML.toLogStr . show
-{-# INLINE toLogStrS #-}
+mlLogLevelToLogCat = \case
+  ML.LevelDebug   -> LogCat Debug
+  ML.LevelInfo    -> LogCat Info
+  ML.LevelWarn    -> LogCat Warn
+  ML.LevelError   -> LogCat Error
+  ML.LevelOther t -> LogCat (Other t)
