@@ -133,7 +133,8 @@ Incoming `monad-logger` messages are wrapped as `logRaw`, so compatibility fits 
 
 ## `TraceId`
 
-`TraceId` is a category-level concern. Use `withTraceId` or one of the provided generators from `Module.Logging.TraceId`.
+This library also provides a super convenient `TraceId` mechanism that can attach scoped trace IDs to log events.
+`TraceId` is just a log category. Use `withTraceId` or one of the provided generators from `Module.Logging.TraceId`.
 
 ## Status
 

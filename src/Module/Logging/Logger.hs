@@ -3,7 +3,28 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 
 module Module.Logging.Logger
-  ( module Module.Logging.Logger
+  ( -- * Logger Lifecycle
+    LoggerWithCleanup(..)
+  , liftBaseLogger
+    -- * Logger Options
+  , LoggerOptions(..)
+  , defaultLoggerStyle
+    -- * Base Loggers
+  , createFastBaseLogger
+  , createStdoutBaseLogger
+  , createSimpleStdoutBaseLogger
+  , createSimpleConcurrentStdoutBaseLogger
+  , createStderrBaseLogger
+  , createFileLogger
+  , createFileLoggerWith
+    -- * Rendering and Composition
+  , renderLogEvent
+  , loggerFromRenderer
+  , makeLoggerFromBase
+  , withLoggerCleanup
+  , withBaseLogger
+  , withBaseLoggerIO
+    -- * Re-exporting fast-logger
   , module System.Log.FastLogger
   ) where
 

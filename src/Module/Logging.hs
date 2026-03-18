@@ -9,11 +9,13 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Module.Logging
-  ( LogSeverity
+  ( -- * Core Types
+    LogSeverity
   , IsLogCat(..)
   , LogCat(..)
   , someSeverity
   , someLogCatName
+    -- * Log Event Model
   , LogEvent(..)
   , logEventCats
   , logEventPayload
@@ -26,6 +28,7 @@ module Module.Logging
   , LogEffect
   , Logging
   , LoggingModule
+    -- * Structured Log Documents
   , LogDoc
   , SomeShown
   , NamedColor(..)
@@ -41,11 +44,13 @@ module Module.Logging
   , logFg
   , logBg
   , logBold
+    -- * Default Log Categories
   , Debug(..)
   , Info(..)
   , Warn(..)
   , Error(..)
   , Other(..)
+    -- * Logger Combinators
   , localLogger
   , localLogEvent
   , addLogCat
@@ -59,6 +64,7 @@ module Module.Logging
   , isLogSubType
   , isLogCatName
   , liftLogger
+    -- * Logging Operations
   , emitLogEvent
   , log_
   , logLoc_
@@ -68,14 +74,17 @@ module Module.Logging
   , logIO
   , logsIO
   , logTHIO
+    -- * Running and Initialization
   , runLogEffect
   , withLiftLogger
   , defaultLoggingOptParser
   , defaultStringToLogSeverity
   , defaultLoggingFromEnv
   , defaultLoggingFromArgs
+    -- * Compatibility
   , monadLoggerAdapter
   , mlLogLevelToLogCat
+    -- * Re-exports
   , ModuleRead(..)
   , ModuleState(..)
   , ModuleInitData(..)

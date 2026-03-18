@@ -2,7 +2,23 @@
 {-# LANGUAGE DeriveLift #-}
 {-# LANGUAGE QuasiQuotes #-}
 
-module Module.Logging.TraceId where
+module Module.Logging.TraceId
+  ( -- * Types
+    TraceId(..)
+    -- * Modules
+  , TraceIdGen
+  , newTraceId
+  , WithTraceId
+  , traceId
+    -- * Attaching Trace IDs
+  , withTraceId
+  , withNewTraceId
+    -- * Trace ID Generators
+  , withRandomTraceIdGen
+  , withTimeTraceIdGen
+  , withCountingTraceIdGen
+  , withStartTimeCountingTraceIdGen
+  ) where
 
 import Control.Concurrent.STM
 import Control.Monad.Effect
