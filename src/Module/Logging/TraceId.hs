@@ -1,5 +1,4 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE DeriveLift #-}
 {-# LANGUAGE QuasiQuotes #-}
 
 module Module.Logging.TraceId
@@ -13,11 +12,16 @@ module Module.Logging.TraceId
     -- * Attaching Trace IDs
   , withTraceId
   , withNewTraceId
+  , runWithTraceIdIn
     -- * Trace ID Generators
   , withRandomTraceIdGen
   , withTimeTraceIdGen
   , withCountingTraceIdGen
   , withStartTimeCountingTraceIdGen
+  , runTraceIdGen
+  , runTraceIdGenIn
+  , TraceIdGenRead
+  , WithTraceIdRead
   ) where
 
 import Control.Concurrent.STM
