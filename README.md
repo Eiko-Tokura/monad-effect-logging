@@ -19,6 +19,10 @@ The current API is centered on one unified message payload `LogDoc`.
 
 * Open log categories, extensible
 
+* Easy JSON logging by tagging `loggerJson`
+
+This enables you to easily add JSON logging to your files while keeping the console output colorful and readable: you can write no-color json logging to a file while use `pSho` and color constructors to display stuff on the screen at the same time.
+
 ## Core types
 
 - `LogEvent` for the event envelope
@@ -88,8 +92,8 @@ runApp app = do
   stdoutBase <- createSimpleConcurrentStdoutBaseLogger
   fileBase <- createFileLogger "app.log"
 
-  let stdoutLogger = makeLoggerFromBase ( buildLoggerStyle loggerUseAnsi ) stdoutBase
-  let fileLogger   = makeLoggerFromBase ( buildLoggerStyle loggerNoStyle ) fileBase
+  let stdoutLogger = makeLoggerFromBase ( buildLoggerStyle loggerUseAnsi                ) stdoutBase
+  let fileLogger   = makeLoggerFromBase ( buildLoggerStyle (loggerJson . loggerNoStyle) ) fileBase
 
   runEffT00 $ withLoggerCleanup (stdoutLogger <> fileLogger) app
 ```
