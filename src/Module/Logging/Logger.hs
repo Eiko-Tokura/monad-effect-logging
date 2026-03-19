@@ -250,7 +250,8 @@ renderLogEvent LoggerOptions {..} entry = do
       quoteAndEscape x = quote (escape x)
 
       escape :: ML.LogStr -> ML.LogStr
-      escape = fromLogStr
+      escape
+        =   fromLogStr
         >>> replace
               [ (wordQuote    , B.pack [wordBackslash, wordQuote     ])
               , (wordBackslash, B.pack [wordBackslash, wordBackslash ])
@@ -258,8 +259,8 @@ renderLogEvent LoggerOptions {..} entry = do
               , (wordTab      , B.pack [wordBackslash, wordT         ])
               , (wordCarriage , B.pack [wordBackslash, wordR         ])
               ]
-        >>> B.concat
-        >>> toLogStr
+        >>> map toLogStr
+        >>> mconcat
         where
           wordQuote     = 34  :: Word8
           wordBackslash = 92  :: Word8
