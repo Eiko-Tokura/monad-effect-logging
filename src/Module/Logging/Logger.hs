@@ -9,6 +9,7 @@ module Module.Logging.Logger
   , liftBaseLogger
     -- * Logger Options
   , LoggerOptions(..)
+  , LogOrderControl(..)
   , defaultLoggerStyle
     -- * Base Loggers
   , createFastBaseLogger
@@ -51,11 +52,20 @@ import qualified Control.Monad.Logger as ML
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BL
 import qualified Options.Applicative as O
+import Data.Maybe
 
 data LoggerWithCleanup m a = LoggerWithCleanup
   { baseLogFunc :: a -> m ()
   , cleanUpFunc :: m ()
   }
+
+data LogOrderControl
+  = LogTimeChunk
+  | LogCatChunk
+  | LogLocChunk
+  | LogSrcChunk
+  | LogDocChunk
+  deriving (Eq, Ord, Show)
 
 data LoggerOptions = LoggerOptions
   { loggerDocRenderOptions :: DocRenderOptions
@@ -64,6 +74,7 @@ data LoggerOptions = LoggerOptions
   , loggerIncludeLoc       :: Bool
   , loggerIncludeSource    :: Bool
   , loggerAppendNewline    :: Bool
+  , loggerOrderControl     :: Maybe [LogOrderControl]
   }
 
 defaultLoggerStyle :: LoggerOptions
@@ -75,6 +86,7 @@ defaultLoggerStyle =
     , loggerIncludeLoc       = True
     , loggerIncludeSource    = True
     , loggerAppendNewline    = True
+    , loggerOrderControl     = Nothing
     }
 
 liftBaseLogger :: (m () -> n ()) -> LoggerWithCleanup m a -> LoggerWithCleanup n a
@@ -159,13 +171,20 @@ renderLogEvent LoggerOptions {..} entry = do
           then maybe mempty ((<> "|") . ML.toLogStr) (meta ^. logMetaSource)
           else mempty
       suffix = if loggerAppendNewline then "\n" else mempty
+      orderControl = fromMaybe [LogTimeChunk, LogCatChunk, LogLocChunk, LogSrcChunk, LogDocChunk] loggerOrderControl
   timeChunk <-
     if loggerIncludeTime
       then do
         now <- getCurrentTime
         pure $ ML.toLogStr (show now) <> "|"
       else pure mempty
-  pure $ timeChunk <> catChunk <> locChunk <> srcChunk <> docChunk <> suffix
+  pure $ mconcat (map (\case
+           LogTimeChunk -> timeChunk
+           LogCatChunk  -> catChunk
+           LogLocChunk  -> locChunk
+           LogSrcChunk  -> srcChunk
+           LogDocChunk  -> docChunk
+         ) orderControl) <> suffix
   where
     intersperse _ [] = []
     intersperse sep (x:xs) = x : prependAll xs
