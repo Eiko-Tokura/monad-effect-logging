@@ -355,7 +355,7 @@ mergeStyle outer inner =
 
 ansiForStyle :: Style -> ML.LogStr
 ansiForStyle style =
-  ML.toLogStr $ "\ESC[" <> intercalate ";" codes <> "m"
+  ML.toLogStr $ "\ESC[" <> mconcat (intercalate [";"] (pure <$> codes)) <> "m"
   where
     codes =
       let baseCodes =
@@ -366,15 +366,19 @@ ansiForStyle style =
               ]
        in if null baseCodes then ["0"] else baseCodes
 
-colorToFgCodes :: Color -> [String]
+colorToFgCodes :: Color -> [ML.LogStr]
 colorToFgCodes DefaultColor  = ["39"]
-colorToFgCodes (Named color) = [show $ namedColorCode color]
-colorToFgCodes (RGB r g b)   = ["38", "2", show r, show g, show b]
+colorToFgCodes (Named color) = [lshow $ namedColorCode color]
+colorToFgCodes (RGB r g b)   = ["38", "2", lshow r, lshow g, lshow b]
 
-colorToBgCodes :: Color -> [String]
+colorToBgCodes :: Color -> [ML.LogStr]
 colorToBgCodes DefaultColor  = ["49"]
-colorToBgCodes (Named color) = [show $ namedColorCode color + 10]
-colorToBgCodes (RGB r g b)   = ["48", "2", show r, show g, show b]
+colorToBgCodes (Named color) = [lshow $ namedColorCode color + 10]
+colorToBgCodes (RGB r g b)   = ["48", "2", lshow r, lshow g, lshow b]
+
+lshow :: Show a => a -> ML.LogStr
+lshow = ML.toLogStr . show
+{-# INLINE lshow #-}
 
 namedColorCode :: NamedColor -> Int
 namedColorCode = \case
