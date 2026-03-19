@@ -215,7 +215,7 @@ renderLogEvent LoggerOptions {..} entry = do
       docChunk = renderLogDoc loggerDocRenderOptions (meta ^. logMetaDoc)
       catChunk =
         if loggerIncludeCats && not (null (entry ^. logEventCats))
-          then "[" <> mconcat (intersperse "|" (map someLogCatName (entry ^. logEventCats))) <> "] "
+          then "[" <> mconcat (intersperse "|" (map (renderLogDoc loggerDocRenderOptions . someLogCatDisplay) (entry ^. logEventCats))) <> "] "
           else mempty
       locChunk =
         if loggerIncludeLoc

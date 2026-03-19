@@ -14,6 +14,7 @@ module Module.Logging
   , LogCat(..)
   , someSeverity
   , someLogCatName
+  , someLogCatDisplay
     -- * Log Event Model
   , LogEvent(..)
   , logEventCats
@@ -113,11 +114,16 @@ type LogSeverity = Fixed E1
 class Typeable cat => IsLogCat (cat :: Type) where
   severity :: cat -> Maybe LogSeverity
   severity _ = Nothing
-  logTypeDisplay :: cat -> ML.LogStr
-  {-# MINIMAL logTypeDisplay #-}
+
+  logTypeName :: cat -> ML.LogStr
+  {-# MINIMAL logTypeName #-}
+
+  logTypeDisplay :: ML.LogStr -> LogDoc
+  logTypeDisplay = DocRaw
+  {-# INLINE logTypeDisplay #-}
 
 instance IsLogCat Text where
-  logTypeDisplay = ML.toLogStr
+  logTypeName = ML.toLogStr
 
 data LogCat where
   LogCat :: forall cat. IsLogCat cat => cat -> LogCat
@@ -126,7 +132,10 @@ someSeverity :: LogCat -> Maybe LogSeverity
 someSeverity (LogCat @cat x) = severity @cat x
 
 someLogCatName :: LogCat -> ML.LogStr
-someLogCatName (LogCat @cat x) = logTypeDisplay @cat x
+someLogCatName (LogCat @cat x) = logTypeName @cat x
+
+someLogCatDisplay :: LogCat -> LogDoc
+someLogCatDisplay (LogCat @cat x) = logTypeDisplay @cat (logTypeName @cat x)
 
 -- | Carries several log categories and a payload.
 data LogEvent a = LogEvent
@@ -260,23 +269,23 @@ newtype Other = Other Text deriving TH.Lift
 
 instance IsLogCat Debug where
   severity _ = Just 1
-  logTypeDisplay _ = "DEBUG"
+  logTypeName _ = "DEBUG"
 
 instance IsLogCat Info where
   severity _ = Just 2
-  logTypeDisplay _ = "INFO"
+  logTypeName _ = "INFO"
 
 instance IsLogCat Warn where
   severity _ = Just 3
-  logTypeDisplay _ = "WARN"
+  logTypeName _ = "WARN"
 
 instance IsLogCat Error where
   severity _ = Just 4
-  logTypeDisplay _ = "ERROR"
+  logTypeName _ = "ERROR"
 
 instance IsLogCat Other where
   severity _ = Just 2
-  logTypeDisplay (Other t) = "OTHER:" <> ML.toLogStr t
+  logTypeName (Other t) = "OTHER:" <> ML.toLogStr t
 
 type Logger :: (Type -> Type) -> Type -> Type
 newtype Logger m a = Logger

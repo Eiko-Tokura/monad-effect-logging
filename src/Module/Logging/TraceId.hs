@@ -39,7 +39,7 @@ newtype TraceId = TraceId {unTraceId :: Word64}
   deriving newtype (Eq, Ord, Show, FromJSON, ToJSON)
 
 instance IsLogCat TraceId where
-  logTypeDisplay (TraceId tid) = "TID=" <> toLogStr tid
+  logTypeName (TraceId tid) = "TID=" <> toLogStr tid
 
 [makeRModule__|
 TraceIdGen
