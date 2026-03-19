@@ -128,8 +128,8 @@ data ProxyLog = Bytes | Logic deriving (Lift)
 instance IsLogCat ProxyLog where
   severity Bytes = severity Debug
   severity Logic = severity Info
-  logTypeDisplay Bytes = "BYTES"
-  logTypeDisplay Logic = "LOGIC"
+  logTypeName Bytes = "BYTES"
+  logTypeName Logic = "LOGIC"
 ```
 
 You can add local categories with `effAddLogCat`, and filter them with the existing combinators.
