@@ -270,18 +270,22 @@ newtype Other = Other Text deriving TH.Lift
 instance IsLogCat Debug where
   severity _ = Just 1
   logTypeName _ = "DEBUG"
+  logTypeDisplay = logFg Blue . DocRaw
 
 instance IsLogCat Info where
   severity _ = Just 2
   logTypeName _ = "INFO"
+  logTypeDisplay = logFg Green . DocRaw
 
 instance IsLogCat Warn where
   severity _ = Just 3
   logTypeName _ = "WARN"
+  logTypeDisplay = logFg Yellow . DocRaw
 
 instance IsLogCat Error where
   severity _ = Just 4
   logTypeName _ = "ERROR"
+  logTypeDisplay = logFg Red . DocRaw
 
 instance IsLogCat Other where
   severity _ = Just 2
