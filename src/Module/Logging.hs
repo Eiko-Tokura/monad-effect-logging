@@ -162,6 +162,18 @@ data Color
   | RGB   !Word8 !Word8 !Word8
   deriving (Eq, Show)
 
+class IsLogColor c where
+  toLogColor :: c -> Color
+
+instance IsLogColor Color where
+  toLogColor = id
+
+instance IsLogColor NamedColor where
+  toLogColor = Named
+
+instance IsLogColor (Word8, Word8, Word8) where
+  toLogColor (r, g, b) = RGB r g b
+
 data Style = Style
   { styleFg   :: Maybe Color
   , styleBg   :: Maybe Color
@@ -292,11 +304,11 @@ logRaw = DocRaw
 logShow :: Show a => a -> LogDoc
 logShow = DocShown . SomeShown
 
-logFg :: Color -> LogDoc -> LogDoc
-logFg color = DocStyled defaultStyle {styleFg = Just color}
+logFg :: IsLogColor color => color -> LogDoc -> LogDoc
+logFg color = DocStyled defaultStyle {styleFg = Just $ toLogColor color}
 
-logBg :: Color -> LogDoc -> LogDoc
-logBg color = DocStyled defaultStyle {styleBg = Just color}
+logBg :: IsLogColor color => color -> LogDoc -> LogDoc
+logBg color = DocStyled defaultStyle {styleBg = Just $ toLogColor color}
 
 logBold :: LogDoc -> LogDoc
 logBold = DocStyled defaultStyle {styleBold = True}

@@ -64,7 +64,7 @@ import Module.Logging
 example :: (Monad m, In (LogEffect m LogDoc) mods) => EffT mods es m ()
 example = do
   $(logTH Info) $ "starting request " <> logShow (42 :: Int)
-  $(logTH Warn) $ logFg (Named Yellow) "slow query: " <> logShow ("SELECT ..." :: String)
+  $(logTH Warn) $ logFg Yellow "slow query: " <> logShow ("SELECT ..." :: String)
 ```
 
 Available smart constructors include:
