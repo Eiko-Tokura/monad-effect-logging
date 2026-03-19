@@ -44,6 +44,7 @@ module Module.Logging
   , logFg
   , logBg
   , logBold
+  , ToLog(..)
     -- * Default Log Categories
   , Debug(..)
   , Info(..)
@@ -182,6 +183,18 @@ instance IsLogColor NamedColor where
 
 instance IsLogColor (Word8, Word8, Word8) where
   toLogColor (r, g, b) = RGB r g b
+
+class ToLog a where
+  toLog :: a -> LogDoc
+
+instance ToLog LogDoc where
+  toLog = id
+
+instance ToLog Text where
+  toLog = DocRaw . ML.toLogStr
+
+instance ToLog String where
+  toLog = DocRaw . ML.toLogStr
 
 data Style = Style
   { styleFg   :: Maybe Color
