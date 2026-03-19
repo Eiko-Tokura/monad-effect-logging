@@ -10,7 +10,18 @@ module Module.Logging.Logger
     -- * Logger Options
   , LoggerOptions(..)
   , LogOrderControl(..)
+  , LoggerStyle
   , defaultLoggerStyle
+  , buildLoggerStyle
+  , loggerUseAnsi
+  , loggerNoStyle
+  , loggerShowWith
+  , loggerNoTime
+  , loggerNoCats
+  , loggerNoLoc
+  , loggerNoSource
+  , loggerNoNewline
+  , loggerOrder
     -- * Base Loggers
   , createFastBaseLogger
   , createStdoutBaseLogger
@@ -77,6 +88,8 @@ data LoggerOptions = LoggerOptions
   , loggerOrderControl     :: Maybe [LogOrderControl]
   }
 
+type LoggerStyle = LoggerOptions -> LoggerOptions
+
 defaultLoggerStyle :: LoggerOptions
 defaultLoggerStyle =
   LoggerOptions
@@ -88,6 +101,48 @@ defaultLoggerStyle =
     , loggerAppendNewline    = True
     , loggerOrderControl     = Nothing
     }
+
+buildLoggerStyle :: LoggerStyle -> LoggerOptions
+buildLoggerStyle style = style defaultLoggerStyle
+
+loggerUseAnsi :: LoggerStyle
+loggerUseAnsi opts =
+  opts
+    { loggerDocRenderOptions =
+        (loggerDocRenderOptions opts) { docRenderStyleMode = AnsiStyles }
+    }
+
+loggerNoStyle :: LoggerStyle
+loggerNoStyle opts =
+  opts
+    { loggerDocRenderOptions =
+        (loggerDocRenderOptions opts) { docRenderStyleMode = NoStyles }
+    }
+
+loggerShowWith :: (forall a. Show a => a -> ML.LogStr) -> LoggerStyle
+loggerShowWith renderShown opts =
+  opts
+    { loggerDocRenderOptions =
+        (loggerDocRenderOptions opts) { docRenderShow = renderShown }
+    }
+
+loggerNoTime :: LoggerStyle
+loggerNoTime opts = opts {loggerIncludeTime = False}
+
+loggerNoCats :: LoggerStyle
+loggerNoCats opts = opts {loggerIncludeCats = False}
+
+loggerNoLoc :: LoggerStyle
+loggerNoLoc opts = opts {loggerIncludeLoc = False}
+
+loggerNoSource :: LoggerStyle
+loggerNoSource opts = opts {loggerIncludeSource = False}
+
+loggerNoNewline :: LoggerStyle
+loggerNoNewline opts = opts {loggerAppendNewline = False}
+
+loggerOrder :: [LogOrderControl] -> LoggerStyle
+loggerOrder chunks opts = opts {loggerOrderControl = Just chunks}
 
 liftBaseLogger :: (m () -> n ()) -> LoggerWithCleanup m a -> LoggerWithCleanup n a
 liftBaseLogger nat (LoggerWithCleanup f cleanup) =

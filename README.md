@@ -88,30 +88,29 @@ runApp app = do
   stdoutBase <- createSimpleConcurrentStdoutBaseLogger
   fileBase <- createFileLogger "app.log"
 
-  let stdoutLogger =
-        makeLoggerFromBase
-          defaultLoggerStyle
-            { loggerDocRenderOptions =
-                defaultDocRenderOptions { docRenderStyleMode = AnsiStyles }
-            }
-          stdoutBase
-
-  let fileLogger =
-        makeLoggerFromBase
-          defaultLoggerStyle
-            { loggerDocRenderOptions =
-                defaultDocRenderOptions { docRenderStyleMode = NoStyles }
-            }
-          fileBase
+  let stdoutLogger = makeLoggerFromBase ( buildLoggerStyle loggerUseAnsi ) stdoutBase
+  let fileLogger   = makeLoggerFromBase ( buildLoggerStyle loggerNoStyle ) fileBase
 
   runEffT00 $ withLoggerCleanup (stdoutLogger <> fileLogger) app
 ```
+
+Here each style is a builder function `LoggerOptions -> LoggerOptions`, and the `buildLoggerStyle` function is just a composition of them on the `defaultLoggerStyle`.
 
 For custom pipelines, use the lower-level building blocks:
 
 - `renderLogEvent`
 - `loggerFromRenderer`
 - your own `Logger`
+
+Styles compose as normal functions:
+
+```haskell
+verboseConsole :: LoggerOptions
+verboseConsole =
+  buildLoggerStyle
+    $ loggerUseAnsi
+    . loggerOrder [LogTimeChunk, LogCatChunk, LogLocChunk, LogDocChunk]
+```
 
 ## Categories
 
