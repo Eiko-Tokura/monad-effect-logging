@@ -21,6 +21,7 @@ module Module.Logging.Logger
   , loggerNoLoc
   , loggerNoSource
   , loggerNoNewline
+  , loggerJson
   , loggerOrder
     -- * Base Loggers
   , createFastBaseLogger
@@ -64,6 +65,11 @@ import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as BL
 import qualified Options.Applicative as O
 import Data.Maybe
+import Data.List (intersperse)
+import Control.Arrow
+import Data.Word
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as B
 
 data LoggerWithCleanup m a = LoggerWithCleanup
   { baseLogFunc :: a -> m ()
@@ -85,6 +91,7 @@ data LoggerOptions = LoggerOptions
   , loggerIncludeLoc       :: Bool
   , loggerIncludeSource    :: Bool
   , loggerAppendNewline    :: Bool
+  , loggerJsonFormat       :: Bool
   , loggerOrderControl     :: Maybe [LogOrderControl]
   }
 
@@ -99,6 +106,7 @@ defaultLoggerStyle =
     , loggerIncludeLoc       = True
     , loggerIncludeSource    = True
     , loggerAppendNewline    = True
+    , loggerJsonFormat       = False
     , loggerOrderControl     = Nothing
     }
 
@@ -140,6 +148,9 @@ loggerNoSource opts = opts {loggerIncludeSource = False}
 
 loggerNoNewline :: LoggerStyle
 loggerNoNewline opts = opts {loggerAppendNewline = False}
+
+loggerJson :: LoggerStyle
+loggerJson opts = opts {loggerJsonFormat = True}
 
 loggerOrder :: [LogOrderControl] -> LoggerStyle
 loggerOrder chunks opts = opts {loggerOrderControl = Just chunks}
@@ -215,47 +226,97 @@ renderLogEvent LoggerOptions {..} entry = do
       docChunk = renderLogDoc loggerDocRenderOptions (meta ^. logMetaDoc)
       catChunk =
         if loggerIncludeCats && not (null (entry ^. logEventCats))
-          then "[" <> mconcat (intersperse "|" (map (renderLogDoc loggerDocRenderOptions . someLogCatDisplay) (entry ^. logEventCats))) <> "] "
-          else mempty
+          then squareBracket $ logSepList (map (renderLogDoc loggerDocRenderOptions . someLogCatDisplay) (entry ^. logEventCats))
+          else emptyField
       locChunk =
         if loggerIncludeLoc
-          then maybe mempty renderLoc (meta ^. logMetaLoc)
-          else mempty
+          then maybe emptyField renderLoc (meta ^. logMetaLoc)
+          else emptyField
       srcChunk =
         if loggerIncludeSource
-          then maybe mempty ((<> "|") . ML.toLogStr) (meta ^. logMetaSource)
-          else mempty
+          then maybe emptyField ML.toLogStr (meta ^. logMetaSource)
+          else emptyField
       suffix = if loggerAppendNewline then "\n" else mempty
       orderControl = fromMaybe [LogTimeChunk, LogCatChunk, LogLocChunk, LogSrcChunk, LogDocChunk] loggerOrderControl
+
+      logSepList x = mconcat (intersperse sep $ map quote x)
+
+      emptyField
+        | loggerJsonFormat = "null"
+        | otherwise        = mempty
+
+      quote x = "\"" <> x <> "\""
+
+      quoteAndEscape x = quote (escape x)
+
+      escape :: ML.LogStr -> ML.LogStr
+      escape = fromLogStr
+        >>> replace
+              [ (wordQuote    , B.pack [wordBackslash, wordQuote     ])
+              , (wordBackslash, B.pack [wordBackslash, wordBackslash ])
+              , (wordNewline  , B.pack [wordBackslash, wordN         ])
+              , (wordTab      , B.pack [wordBackslash, wordT         ])
+              , (wordCarriage , B.pack [wordBackslash, wordR         ])
+              ]
+        >>> B.concat
+        >>> toLogStr
+        where
+          wordQuote     = 34  :: Word8
+          wordBackslash = 92  :: Word8
+          wordNewline   = 10  :: Word8
+          wordTab       = 9   :: Word8
+          wordCarriage  = 13  :: Word8
+          wordN         = 110 :: Word8
+          wordT         = 116 :: Word8
+          wordR         = 114 :: Word8
+
+      replace :: [(Word8, ByteString)] -> ByteString -> [ByteString]
+      replace works input =
+        let (prefix, work) = B.break (\c -> any (\(w, _) -> w == c) works) input
+        in case B.uncons work of
+          Nothing     -> [prefix]
+          Just (h, t) ->
+            prefix
+            : case lookup h works of
+                Nothing -> B.singleton h
+                Just r  -> r
+            : replace works t
+
+      squareBracket x = "[" <> x <> "]"
+
+      bigBracket x = "{" <> x <> "}"
+
+      ifJson :: (a -> a) -> a -> a
+      ifJson f x = if loggerJsonFormat then f x else x
+
+      sep = if loggerJsonFormat then "," else "|"
+
+      renderLoc loc =
+        objectLike
+          [ ("file" , ifJson quote $ ML.toLogStr (ML.loc_filename loc))
+          , ("start", ifJson quote $ displayPos (ML.loc_start loc))
+          , ("end"  , ifJson quote $ displayPos (ML.loc_end loc))
+          ]
+
+      objectLike :: [(ML.LogStr, ML.LogStr)] -> ML.LogStr
+      objectLike  = ifJson bigBracket
+                  . mconcat
+                  . intersperse sep
+                  . map (\(k, v) -> ifJson ((quote k <> ":") <>) v)
+
+      displayPos (line, col) = ML.toLogStr (show line <> ":" <> show col)
+
   timeChunk <-
     if loggerIncludeTime
-      then do
-        now <- getCurrentTime
-        pure $ ML.toLogStr (show now) <> "|"
+      then ML.toLogStr . show <$> getCurrentTime
       else pure mempty
-  pure $ mconcat (map (\case
-           LogTimeChunk -> timeChunk
-           LogCatChunk  -> catChunk
-           LogLocChunk  -> locChunk
-           LogSrcChunk  -> srcChunk
-           LogDocChunk  -> docChunk
+  pure $ objectLike (map (\case
+           LogTimeChunk -> ("time", ifJson quote timeChunk)
+           LogCatChunk  -> ("type", catChunk)
+           LogLocChunk  -> ("loc" , locChunk)
+           LogSrcChunk  -> ("src" , srcChunk)
+           LogDocChunk  -> ("doc" , ifJson quoteAndEscape docChunk)
          ) orderControl) <> suffix
-  where
-    intersperse _ [] = []
-    intersperse sep (x:xs) = x : prependAll xs
-      where
-        prependAll [] = []
-        prependAll (y:ys) = sep : y : prependAll ys
-
-    renderLoc loc =
-      ML.toLogStr (ML.loc_filename loc)
-        <> "-"
-        <> displayPos (ML.loc_start loc)
-        <> "|"
-        <> displayPos (ML.loc_end loc)
-        <> "|"
-
-    displayPos (line, col) = ML.toLogStr (show line <> ":" <> show col)
 
 loggerFromRenderer
   :: MonadIO m
