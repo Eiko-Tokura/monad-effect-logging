@@ -67,6 +67,7 @@ module Module.Logging
   , isLogCatName
   , liftLogger
     -- * Logging Operations
+  , withLogger
   , emitLogEvent
   , log_
   , logLoc_
@@ -548,6 +549,17 @@ emitLogEvent entry = do
   action <- asksModule @(LogEffect m a) (runLogger . logging)
   lift $ action entry
 
+-- | Retrieve the 'Logger' from the surrounding 'LogEffect' environment and
+-- expose it as the first argument to the given continuation. This lets the
+-- @log ...With_@ combinators be reused directly inside 'EffT' without
+-- reconstructing the 'LogEvent' boilerplate.
+withLogger
+  :: forall a c mods es m r.
+     (Monad m, In' c (LogEffect m a) mods)
+  => (Logger m (LogWithSourceMeta a) -> EffT' c mods es m r)
+  -> EffT' c mods es m r
+withLogger k = asksModule @(LogEffect m a) logging >>= k
+
 logEventWith :: Logger m a -> LogEvent a -> m ()
 logEventWith = _runLogger
 
@@ -558,17 +570,7 @@ logLoc_
   -> cat
   -> LogDoc
   -> EffT' c mods es m ()
-logLoc_ loc cat doc =
-  emitLogEvent $
-    LogEvent
-      { _logEventCats = [LogCat cat]
-      , _logEventPayload =
-          LogWithSourceMeta
-            { _logMetaLoc    = Just loc
-            , _logMetaSource = Nothing
-            , _logMetaDoc    = doc
-            }
-      }
+logLoc_ loc cat doc = withLogger $ \logger -> lift $ logLocWith_ logger loc cat doc
 
 logLocWith_ :: IsLogCat cat => Logger m (LogWithSourceMeta LogDoc) -> ML.Loc -> cat -> LogDoc -> m ()
 logLocWith_ logger loc cat doc = logEventWith logger
@@ -612,17 +614,7 @@ log_
   => cat
   -> LogDoc
   -> EffT' c mods es m ()
-log_ cat doc =
-  emitLogEvent $
-    LogEvent
-      { _logEventCats = [LogCat cat]
-      , _logEventPayload =
-          LogWithSourceMeta
-            { _logMetaLoc    = Nothing
-            , _logMetaSource = Nothing
-            , _logMetaDoc    = doc
-            }
-      }
+log_ cat doc = withLogger $ \logger -> lift $ logWith_ logger cat doc
 
 logs
   :: forall c mods es m.
@@ -630,17 +622,7 @@ logs
   => [LogCat]
   -> LogDoc
   -> EffT' c mods es m ()
-logs cats doc =
-  emitLogEvent $
-    LogEvent
-      { _logEventCats = cats
-      , _logEventPayload =
-          LogWithSourceMeta
-            { _logMetaLoc    = Nothing
-            , _logMetaSource = Nothing
-            , _logMetaDoc    = doc
-            }
-      }
+logs cats doc = withLogger $ \logger -> lift $ logsWith_ logger cats doc
 
 logTH :: (IsLogCat cat, TH.Lift cat) => cat -> TH.Q TH.Exp
 logTH cat = [| logLoc_ $(TH.qLocation >>= TH.lift) $(TH.lift cat) |]
