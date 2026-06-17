@@ -76,6 +76,12 @@ module Module.Logging
   , logIO
   , logsIO
   , logTHIO
+    -- * Logging directly with Logger
+  , logEventWith
+  , logLocWith_
+  , logWith_
+  , logsWith_
+  , logTHWith
     -- * Running and Initialization
   , runLogEffect
   , withLiftLogger
@@ -542,6 +548,9 @@ emitLogEvent entry = do
   action <- asksModule @(LogEffect m a) (runLogger . logging)
   lift $ action entry
 
+logEventWith :: Logger m a -> LogEvent a -> m ()
+logEventWith = _runLogger
+
 logLoc_
   :: forall c mods es m cat.
      (Monad m, In' c (LogEffect m LogDoc) mods, IsLogCat cat)
@@ -560,6 +569,42 @@ logLoc_ loc cat doc =
             , _logMetaDoc    = doc
             }
       }
+
+logLocWith_ :: IsLogCat cat => Logger m (LogWithSourceMeta LogDoc) -> ML.Loc -> cat -> LogDoc -> m ()
+logLocWith_ logger loc cat doc = logEventWith logger
+  LogEvent
+    { _logEventCats = [LogCat cat]
+    , _logEventPayload =
+        LogWithSourceMeta
+          { _logMetaLoc    = Just loc
+          , _logMetaSource = Nothing
+          , _logMetaDoc    = doc
+          }
+    }
+
+logWith_ :: IsLogCat cat => Logger m (LogWithSourceMeta LogDoc) -> cat -> LogDoc -> m ()
+logWith_ logger cat doc = logEventWith logger
+  LogEvent
+    { _logEventCats = [LogCat cat]
+    , _logEventPayload =
+        LogWithSourceMeta
+          { _logMetaLoc    = Nothing
+          , _logMetaSource = Nothing
+          , _logMetaDoc    = doc
+          }
+    }
+
+logsWith_ :: Logger m (LogWithSourceMeta LogDoc) -> [LogCat] -> LogDoc -> m ()
+logsWith_ logger cats doc = logEventWith logger
+  LogEvent
+    { _logEventCats = cats
+    , _logEventPayload =
+        LogWithSourceMeta
+          { _logMetaLoc    = Nothing
+          , _logMetaSource = Nothing
+          , _logMetaDoc    = doc
+          }
+    }
 
 log_
   :: forall c mods es m cat.
@@ -599,6 +644,16 @@ logs cats doc =
 
 logTH :: (IsLogCat cat, TH.Lift cat) => cat -> TH.Q TH.Exp
 logTH cat = [| logLoc_ $(TH.qLocation >>= TH.lift) $(TH.lift cat) |]
+
+-- | A TH helper for 'logLocWith_' that captures the call site 'ML.Loc' at
+-- compile time. Splices into a function expecting the 'Logger' and the
+-- 'LogDoc' payload:
+--
+-- @
+-- \logger doc -> logLocWith_ logger '<loc> '<cat> doc
+-- @
+logTHWith :: (IsLogCat cat, TH.Lift cat) => cat -> TH.Q TH.Exp
+logTHWith cat = [| logLocWith_ $(TH.qLocation >>= TH.lift) $(TH.lift cat) |]
 
 logLocIO
   :: forall c mods es m cat.
